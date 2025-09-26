@@ -20,8 +20,8 @@ class Settings(BaseSettings):
     
     # Security
     SECRET_KEY: str = "your-secret-key-change-in-production"
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8080"]
-    TRUSTED_HOSTS: List[str] = ["agripal.com", "*.agripal.com"]
+    ALLOWED_ORIGINS: str = "*"  # Changed to string for environment variable compatibility
+    TRUSTED_HOSTS: str = "*"  # Changed to string for environment variable compatibility
     
     # Database Configuration
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/agripal"

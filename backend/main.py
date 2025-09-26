@@ -44,7 +44,7 @@ security = HTTPBearer()
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=["*"] if settings.ALLOWED_ORIGINS == "*" else settings.ALLOWED_ORIGINS.split(","),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
@@ -54,7 +54,7 @@ app.add_middleware(
 if settings.ENVIRONMENT == "production":
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=settings.TRUSTED_HOSTS
+        allowed_hosts=["*"] if settings.TRUSTED_HOSTS == "*" else settings.TRUSTED_HOSTS.split(",")
     )
 
 # Add AI agent authentication and rate limiting middleware
