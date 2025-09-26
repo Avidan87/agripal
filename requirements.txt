@@ -1,0 +1,63 @@
+# Core web framework and API
+fastapi
+uvicorn
+
+# Database and async support
+asyncpg
+sqlalchemy
+
+# Security and authentication
+python-jose
+passlib[bcrypt]
+PyJWT
+
+# Redis for rate limiting and caching
+redis
+
+# Pydantic for data validation
+pydantic
+pydantic-settings
+
+# OpenAI and Hugging Face for AI/ML
+openai
+openai-agents
+huggingface_hub
+datasets
+
+# LangChain for advanced knowledge processing
+langchain
+langchain-openai
+langchain-community
+langchain-chroma
+langchain-text-splitters
+
+# ChromaDB for vector search
+chromadb
+
+# Email support
+sendgrid
+jinja2
+
+# Image processing
+opencv-python
+pillow
+numpy
+
+# Utilities
+python-dotenv
+requests
+click
+colorama
+opencage
+
+# For typing and packaging
+packaging
+
+# Frontend UI dependencies
+gradio>=4.0.0
+python-multipart>=0.0.5
+
+# Optional: for development and testing
+aiohttp
+pytest
+httpx

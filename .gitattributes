@@ -1,0 +1,60 @@
+# 🌾 AgriPal - Git Attributes
+# Line ending and file handling configuration
+
+# Set default behavior for all files
+* text=auto
+
+# Explicitly declare text files you want to always be normalized and converted
+# to native line endings on checkout
+*.py text
+*.md text
+*.txt text
+*.json text
+*.yml text
+*.yaml text
+*.sql text
+*.sh text
+*.bat text
+*.cmd text
+
+# Declare files that will always have LF line endings on checkout
+*.py eol=lf
+*.md eol=lf
+*.json eol=lf
+*.yml eol=lf
+*.yaml eol=lf
+*.sql eol=lf
+*.sh eol=lf
+
+# Declare files that will always have CRLF line endings on checkout
+*.bat eol=crlf
+*.cmd eol=crlf
+
+# Denote all files that are truly binary and should not be modified
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.mov binary
+*.mp4 binary
+*.mp3 binary
+*.flv binary
+*.fla binary
+*.swf binary
+*.gz binary
+*.zip binary
+*.7z binary
+*.ttf binary
+*.eot binary
+*.woff binary
+*.woff2 binary
+*.pyc binary
+*.pdf binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+*.bin binary
+*.so binary
+*.dll binary
+*.exe binary
