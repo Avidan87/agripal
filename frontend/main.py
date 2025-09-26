@@ -17,11 +17,11 @@ def main():
     """Launch AgriPal Gradio UI"""
     print("🌾 Starting AgriPal UI...")
     
-     # Get API URL from environment or use default
-     api_url = os.getenv("AGRIPAL_API_URL", "http://localhost:8000/api/v1/agents")
-     
-     print(f"🔗 API URL: {api_url}")
-     print(f"🌐 Frontend will be available at: http://localhost:7860")
+    # Get API URL from environment or use default
+    api_url = os.getenv("AGRIPAL_API_URL", "http://localhost:8000/api/v1/agents")
+    
+    print(f"🔗 API URL: {api_url}")
+    print(f"🌐 Frontend will be available at: http://localhost:7860")
     
     # Create and launch interface
     app = create_agripal_interface(api_url)
