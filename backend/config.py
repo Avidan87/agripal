@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str = "your-secret-key-change-in-production"
     ALLOWED_ORIGINS: str = "*"  # Changed to string for environment variable compatibility
-    TRUSTED_HOSTS: str = "*"  # Changed to string for environment variable compatibility
+    TRUSTED_HOSTS: str = "*.onrender.com,*.render.com,localhost,127.0.0.1"  # Fixed for Render deployment
     
     # Database Configuration
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/agripal"

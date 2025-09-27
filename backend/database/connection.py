@@ -2,24 +2,16 @@
 🗄️ AgriPal Database Connection Management
 Async database connection pooling and management for PostgreSQL.
 """
-import asyncio
 import logging
 from typing import Optional, AsyncGenerator
 from contextlib import asynccontextmanager
 
-import asyncpg
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import NullPool
 
 from ..config import settings
 
 logger = logging.getLogger(__name__)
-
-try:
-    import asyncpg
-except ImportError:
-    logger.warning("⚠️ asyncpg not available, database functionality may be limited")
-    asyncpg = None
 
 class DatabaseManager:
     """Async database connection manager with connection pooling"""
@@ -40,12 +32,33 @@ class DatabaseManager:
             # Handle SSL configuration for production environments like Render
             connect_args = {}
             if settings.ENVIRONMENT == "production":
+                # For Render PostgreSQL, SSL is handled via URL parameters
+                # Don't add ssl to connect_args when sslmode is in URL
                 connect_args = {
-                    "ssl": "require",
                     "server_settings": {
                         "jit": "off"
                     }
                 }
+                # Ensure SSL is properly configured for Render
+                if "sslmode" not in self.database_url:
+                    if "?" in self.database_url:
+                        self.database_url += "&sslmode=require"
+                    else:
+                        self.database_url += "?sslmode=require"
+            
+            # Log the database URL for debugging (without password)
+            safe_url = self.database_url
+            if "://" in safe_url and "@" in safe_url:
+                # Hide password in logs
+                parts = safe_url.split("://")
+                if len(parts) == 2:
+                    protocol, rest = parts
+                    if "@" in rest:
+                        user_pass, host_db = rest.split("@", 1)
+                        if ":" in user_pass:
+                            user, _ = user_pass.split(":", 1)
+                            safe_url = f"{protocol}://{user}:***@{host_db}"
+            logger.info(f"🔗 Database URL: {safe_url}")
             
             # Create async engine with connection pooling
             self.engine = create_async_engine(
@@ -75,8 +88,10 @@ class DatabaseManager:
             
         except Exception as e:
             logger.error(f"❌ Failed to initialize database connection: {str(e)}")
+            logger.error(f"🔍 Connection details: URL={safe_url}, Environment={settings.ENVIRONMENT}")
             self._initialization_failed = True
-            raise
+            # Don't raise - allow fallback to in-memory storage
+            logger.warning("⚠️ Database initialization failed, will use fallback storage")
     
     async def _test_connection(self):
         """Test database connection"""
