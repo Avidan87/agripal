@@ -5,6 +5,7 @@ uvicorn
 # Database and async support
 asyncpg
 sqlalchemy
+psycopg2-binary
 
 # Security and authentication
 python-jose
