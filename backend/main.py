@@ -157,6 +157,86 @@ async def analyze_crop_issue(
             user_context=user_context
         )
         
+        # 🔥 CRITICAL FIX: Persist conversation messages to maintain conversation history
+        try:
+            from .database.connection import get_database_manager
+            from .database.services import SessionService
+            from uuid import UUID
+            
+            db_manager = await get_database_manager()
+            session_service = SessionService(db_manager)
+            
+            # Save user message
+            await session_service.add_message(
+                session_id=UUID(user_session.id),
+                message_type="user",
+                content=message,
+                metadata={
+                    "has_image": bool(image_data), 
+                    "crop_type": getattr(user_session, 'crop_type', None),
+                    "location": getattr(user_session, 'location', None)
+                }
+            )
+            
+            # Save assistant response (extract best available display text)
+            results = workflow_result.get("results", {}) if isinstance(workflow_result, dict) else {}
+            display_text = (
+                results.get("display_text") or
+                (results.get("knowledge") or {}).get("display_text") or
+                (results.get("knowledge") or {}).get("contextual_advice") or
+                (results.get("perception") or {}).get("analysis_text") or
+                workflow_result.get("results", {}).get("knowledge", {}).get("contextual_advice", "Analysis completed")
+            )
+            
+            if display_text:
+                await session_service.add_message(
+                    session_id=UUID(user_session.id),
+                    message_type="assistant", 
+                    content=display_text,
+                    metadata={
+                        "agents_executed": workflow_result.get("agents_executed", []),
+                        "workflow_type": workflow_result.get("workflow_type", "FULL_CONSULTATION")
+                    }
+                )
+            logger.info(f"💾 Conversation messages saved for session {user_session.id}")
+            
+        except Exception as db_error:
+            logger.warning(f"⚠️ Database persistence failed, using fallback: {str(db_error)}")
+            # Fallback to in-memory storage
+            try:
+                from .memory_storage import conversation_storage
+                
+                # Save user message
+                conversation_storage.add_message(
+                    session_id=user_session.id,
+                    message_type="user",
+                    content=message,
+                    metadata={
+                        "has_image": bool(image_data),
+                        "crop_type": getattr(user_session, 'crop_type', None)
+                    }
+                )
+                
+                # Save assistant response
+                results = workflow_result.get("results", {}) if isinstance(workflow_result, dict) else {}
+                display_text = (
+                    results.get("display_text") or
+                    (results.get("knowledge") or {}).get("contextual_advice") or
+                    workflow_result.get("results", {}).get("knowledge", {}).get("contextual_advice", "Analysis completed")
+                )
+                
+                if display_text:
+                    conversation_storage.add_message(
+                        session_id=user_session.id,
+                        message_type="assistant",
+                        content=display_text,
+                        metadata={"agents_executed": workflow_result.get("agents_executed", [])}
+                    )
+                logger.info(f"💾 Conversation saved to fallback storage for session {user_session.id}")
+                
+            except Exception as fallback_error:
+                logger.error(f"❌ Both database and fallback storage failed: {str(fallback_error)}")
+        
         # Convert to original response format for backward compatibility
         response = AnalysisResponse(
             response_text=workflow_result.get("results", {}).get("knowledge", {}).get("contextual_advice", "Analysis completed"),

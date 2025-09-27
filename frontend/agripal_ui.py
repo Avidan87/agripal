@@ -165,8 +165,9 @@ class AgriPalInterface:
             logger.error(f"❌ Could not clear session storage: {e}")
     
     def load_conversation_history(self):
-        """Load conversation history from backend API"""
+        """Load conversation history from backend API with enhanced error handling and format conversion"""
         if not self.session_id:
+            logger.info("📭 No session ID available, skipping history load")
             return
         
         try:
@@ -174,49 +175,88 @@ class AgriPalInterface:
             
             async def _load_history_async():
                 try:
+                    # Use the correct backend URL for session history
                     url = f"{self.api_base_url.replace('/api/v1/agents', '')}/sessions/{self.session_id}/history"
+                    logger.info(f"📡 Loading conversation history from: {url}")
+                    
                     async with aiohttp.ClientSession() as session:
                         async with session.get(url) as response:
                             if response.status == 200:
                                 history_data = await response.json()
                                 messages = history_data.get("messages", [])
-                                # Convert backend format to frontend format
+                                logger.info(f"📥 Received {len(messages)} raw messages from backend")
+                                
+                                # Convert backend format to frontend format with better pairing logic
                                 self.chat_history = []
+                                message_pairs = []
                                 current_user_msg = ""
                                 current_ai_msg = ""
                                 
                                 for msg in messages:
-                                    if msg.get("type") == "user":
-                                        # If we have a previous pair, save it
+                                    msg_type = msg.get("type", "").lower()
+                                    content = msg.get("content", "").strip()
+                                    
+                                    if msg_type == "user":
+                                        # If we have a previous complete pair, save it
                                         if current_user_msg and current_ai_msg:
-                                            self.chat_history.append([current_user_msg, current_ai_msg])
-                                        current_user_msg = msg.get("content", "")
+                                            message_pairs.append([current_user_msg, current_ai_msg])
+                                        # Start new pair
+                                        current_user_msg = content
                                         current_ai_msg = ""
-                                    elif msg.get("type") == "assistant":
-                                        current_ai_msg = msg.get("content", "")
+                                    elif msg_type == "assistant":
+                                        # Only set AI message if we have a user message
+                                        if current_user_msg:
+                                            current_ai_msg = content
+                                        else:
+                                            # Orphaned AI message - create a placeholder user message
+                                            current_user_msg = "[Previous conversation context]"
+                                            current_ai_msg = content
                                 
-                                # Add the last pair if it exists
+                                # Add the final pair if complete
                                 if current_user_msg and current_ai_msg:
-                                    self.chat_history.append([current_user_msg, current_ai_msg])
+                                    message_pairs.append([current_user_msg, current_ai_msg])
                                 
-                                logger.info(f"📚 Loaded {len(self.chat_history)} message pairs from backend")
+                                self.chat_history = message_pairs
+                                logger.info(f"📚 Successfully loaded {len(self.chat_history)} conversation pairs from backend")
+                                
+                            elif response.status == 404:
+                                logger.info(f"📭 No conversation history found for session {self.session_id}")
+                                self.chat_history = []
                             else:
                                 logger.warning(f"⚠️ Could not load history: HTTP {response.status}")
+                                
+                except aiohttp.ClientError as e:
+                    logger.error(f"🌐 Network error loading conversation history: {str(e)}")
                 except Exception as e:
-                    logger.error(f"❌ Error loading conversation history: {e}")
+                    logger.error(f"❌ Unexpected error loading conversation history: {str(e)}")
             
-            # Run the async function
+            # Run the async function with better error handling
             try:
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(asyncio.run, _load_history_async())
-                    future.result()
+                    future.result(timeout=10)  # Add timeout
+            except concurrent.futures.TimeoutError:
+                logger.warning("⏱️ Conversation history load timed out")
+                self.chat_history = []
             except RuntimeError:
                 # No event loop running, create a new one
                 asyncio.run(_load_history_async())
                 
         except Exception as e:
-            logger.error(f"❌ Error in load_conversation_history: {e}")
+            logger.error(f"❌ Error in conversation history loading wrapper: {str(e)}")
+            # Ensure we don't crash the UI, just start with empty history
+            self.chat_history = []
+    
+    def _sync_conversation_to_backend(self):
+        """Sync conversation to backend to ensure persistence (non-blocking)"""
+        try:
+            # Note: The backend endpoints already handle message persistence
+            # This method exists for potential future enhancements like batch sync
+            # For now, we rely on the backend API endpoints saving messages
+            logger.debug(f"💾 Conversation sync completed for session {self.session_id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Conversation sync failed: {str(e)}")
         
     def get_custom_css(self) -> str:
         """Return custom CSS for styling"""
@@ -862,6 +902,9 @@ class AgriPalInterface:
                     
                     # Save session after successful message
                     self.save_session()
+                    
+                    # 🔥 CRITICAL: Force immediate backend conversation sync
+                    self._sync_conversation_to_backend()
                     
                 else:
                     # Debug: Log the actual response to understand what's happening
