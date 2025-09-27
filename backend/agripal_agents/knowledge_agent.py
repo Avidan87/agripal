@@ -210,25 +210,31 @@ class KnowledgeAgent:
             if self.dependencies_available and 'asyncpg' in self.dependencies:
                 asyncpg = self.dependencies['asyncpg']
                 try:
+                    # Convert SQLAlchemy URL to asyncpg format
+                    asyncpg_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
                     self.postgres_pool = await asyncpg.create_pool(
-                        settings.DATABASE_URL,
+                        asyncpg_url,
                         min_size=2,
                         max_size=10,
                         command_timeout=60
                     )
                     logger.info("✅ PostgreSQL connection pool created")
                 except Exception as first_error:
-                    # If that fails, try with postgres user
-                    fallback_url = "postgresql://postgres:postgres@localhost:5432/agripal"
+                    # If that fails, try with the same credentials but different database name
+                    fallback_url = settings.DATABASE_URL.replace("agripaldata", "agripal").replace("postgresql+asyncpg://", "postgresql://")
                     logger.warning(f"⚠️ First PostgreSQL connection attempt failed: {str(first_error)}. Trying fallback...")
                     
-                    self.postgres_pool = await asyncpg.create_pool(
-                        fallback_url,
-                    min_size=2,
-                    max_size=10,
-                    command_timeout=60
-                )
-                logger.info("✅ PostgreSQL connection pool created with fallback credentials")
+                    try:
+                        self.postgres_pool = await asyncpg.create_pool(
+                            fallback_url,
+                            min_size=2,
+                            max_size=10,
+                            command_timeout=60
+                        )
+                        logger.info("✅ PostgreSQL connection pool created with fallback database")
+                    except Exception as fallback_error:
+                        logger.error(f"❌ Fallback PostgreSQL connection also failed: {str(fallback_error)}")
+                        raise fallback_error
             else:
                 raise ImportError("asyncpg not available")
             
@@ -535,9 +541,20 @@ Always provide:
         Fallback method for direct tool calls when agent.run is not available
         """
         try:
+            # Enhance search query with perception context if available
+            enhanced_query = user_query
+            if perception_results:
+                image_analysis = perception_results.get('image_analysis', {})
+                issues = image_analysis.get('detected_issues', [])
+                if issues:
+                    # Add perception context to the search query
+                    perception_terms = " ".join(issues[:3])  # Use top 3 issues
+                    enhanced_query = f"{user_query} {perception_terms}"
+                    logger.info(f"🔍 Enhanced search query with perception context: {enhanced_query}")
+            
             # Use direct tool call for knowledge search
             search_result = await self._tool_search_knowledge(
-                query=user_query,
+                query=enhanced_query,
                 crop_type=crop_type,
                 region=user_context.get('location', ''),
                 limit=self.max_search_results
@@ -575,9 +592,51 @@ Always provide:
                 for i, doc in enumerate(documents[:3]):  # Show top 3 results
                     content += f"\n\n{i+1}. {doc.get('content', '')[:200]}..."
             else:
-                # No documents found, provide helpful fallback
-                content = f"I searched for information about '{user_query}' but didn't find specific results in my knowledge base. "
-                content += "You can try rephrasing your question or providing more specific details about your situation."
+                # No documents found, generate query-specific response
+                # Only use perception analysis if the query is actually about image analysis
+                is_image_related_query = any(keyword in user_query.lower() for keyword in [
+                    'image', 'photo', 'picture', 'visual', 'see', 'look', 'appears', 'shows', 'crop image', 'plant image'
+                ])
+                
+                if perception_results and is_image_related_query:
+                    # Use the rich analysis_text from perception agent as the primary response
+                    image_analysis = perception_results.get('image_analysis', {})
+                    analysis_text = image_analysis.get('analysis_text', '')
+                    
+                    if analysis_text and analysis_text.strip():
+                        # Use the perception agent's analysis as the main response
+                        content = analysis_text.strip()
+                    else:
+                        # Fallback to structured data if no analysis_text
+                        issues = image_analysis.get('detected_issues', [])
+                        health_score = image_analysis.get('crop_health_score', 'Unknown')
+                        severity = image_analysis.get('severity', 'Unknown')
+                        
+                        content = f"Based on the visual analysis of your crop image, "
+                        if issues:
+                            content += f"I can see signs of {', '.join(issues[:2])}. "
+                        content += f"The overall health score appears to be {health_score} with {severity} severity. "
+                        content += "While I don't have specific matching documents in my knowledge base, "
+                        content += "I can provide general guidance based on the visual symptoms observed."
+                else:
+                    # Generate query-specific response for non-image queries
+                    content = f"I searched for information about '{user_query}' but didn't find specific results in my knowledge base. "
+                    
+                    # Add more helpful guidance based on the query type
+                    if any(keyword in user_query.lower() for keyword in ['disease', 'pest', 'problem', 'issue', 'sick', 'unhealthy']):
+                        content += "For plant health issues, I'd recommend checking for common symptoms like discoloration, spots, wilting, or unusual growth patterns. "
+                        content += "Consider factors like watering, soil conditions, and environmental stress. "
+                    elif any(keyword in user_query.lower() for keyword in ['fertilizer', 'nutrient', 'feeding', 'soil']):
+                        content += "For soil and nutrient questions, consider factors like pH levels, soil type, and specific nutrient deficiencies. "
+                        content += "A soil test can provide valuable insights into what your plants need. "
+                    elif any(keyword in user_query.lower() for keyword in ['watering', 'water', 'irrigation']):
+                        content += "For watering questions, consider factors like soil type, plant species, weather conditions, and drainage. "
+                        content += "Most plants prefer deep, infrequent watering over frequent shallow watering. "
+                    elif any(keyword in user_query.lower() for keyword in ['planting', 'growing', 'cultivation', 'care']):
+                        content += "For growing questions, consider factors like timing, spacing, soil preparation, and ongoing care requirements. "
+                        content += "Each plant has specific needs for optimal growth. "
+                    
+                    content += "You can try rephrasing your question with more specific details about your situation, or I can help with a different aspect of your farming needs."
                 
                 # Add dynamic expert recommendation if appropriate
                 try:
@@ -851,14 +910,15 @@ Always provide:
         
         perception_context = ""
         if perception_results:
-            issues = perception_results.get('detected_issues', [])
+            image_analysis = perception_results.get('image_analysis', {})
+            issues = image_analysis.get('detected_issues', [])
             top_issue = (issues[0] if isinstance(issues, list) and issues else None) or "Unknown"
-            health_score = perception_results.get('crop_health_score', 'Unknown')
-            severity = perception_results.get('severity', 'Unknown')
-            confidence = perception_results.get('confidence_level', 'Unknown')
+            health_score = image_analysis.get('crop_health_score', 'Unknown')
+            severity = image_analysis.get('severity', 'Unknown')
+            confidence = image_analysis.get('confidence_level', 'Unknown')
             observations = (
-                (perception_results.get('metadata') or {}).get('observations')
-                or perception_results.get('observations') or ""
+                image_analysis.get('metadata', {}).get('observations')
+                or image_analysis.get('observations') or ""
             )
             # Provide rich but compact perception cues without raw formatting headers
             perception_context = (

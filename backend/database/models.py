@@ -169,9 +169,8 @@ class ChromaDBSyncStatus(Base):
         return f"<ChromaDBSyncStatus(id={self.id}, collection='{self.collection_name}', status='{self.sync_status}')>"
 
 # Additional indexes for performance
-Index('idx_users_location_gin', User.location, postgresql_using='gin')
-Index('idx_chat_sessions_session_data_gin', ChatSession.session_data, postgresql_using='gin')
-Index('idx_session_messages_content_gin', SessionMessage.content, postgresql_using='gin')
-Index('idx_knowledge_documents_metadata_gin', KnowledgeDocument.document_metadata, postgresql_using='gin')
+# Note: JSON columns cannot have regular B-tree indexes
+# GIN indexes for JSON require gin_trgm_ops extension in PostgreSQL
+# For now, removing JSON indexes to avoid extension dependencies
 Index('idx_analysis_reports_confidence', AnalysisReport.confidence_score)
 Index('idx_rag_query_analytics_quality_score', RAGQueryAnalytics.response_quality_score)

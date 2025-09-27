@@ -7,7 +7,7 @@ import base64
 import io
 import logging
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 # Heavy imports - will be imported when needed
@@ -831,6 +831,65 @@ class PerceptionAgent:
         
         return img_base64
     
+    def _generate_analysis_text(self, health_score: float, issues: List[str], severity: SeverityLevel, recommendations: List[str], observations: str) -> str:
+        """
+        Generate natural analysis text when not provided by GPT-4o
+        """
+        try:
+            # Create a natural, conversational analysis
+            analysis_parts = []
+            
+            # Health assessment
+            if health_score >= 80:
+                health_desc = "excellent health" 
+                emoji = "🌱✅"
+            elif health_score >= 60:
+                health_desc = "moderate health"
+                emoji = "🌿⚠️"
+            elif health_score >= 40:
+                health_desc = "concerning health"
+                emoji = "🌾❌"
+            else:
+                health_desc = "poor health"
+                emoji = "🌾🚨"
+            
+            analysis_parts.append(f"Your crop shows {health_desc} with a score of {int(health_score)}/100 {emoji}")
+            
+            # Issues
+            if issues:
+                if len(issues) == 1:
+                    analysis_parts.append(f"I can see signs of {issues[0]}.")
+                else:
+                    analysis_parts.append(f"I've identified several concerns: {', '.join(issues[:3])}.")
+            
+            # Severity
+            severity_desc = severity.value.lower()
+            if severity_desc == "high" or severity_desc == "critical":
+                analysis_parts.append(f"The situation requires {severity_desc} attention. 🚨")
+            elif severity_desc == "medium":
+                analysis_parts.append(f"This is a {severity_desc} concern that should be addressed. ⚠️")
+            else:
+                analysis_parts.append(f"The issues appear to be {severity_desc} in severity. 💡")
+            
+            # Observations
+            if observations:
+                analysis_parts.append(f"Key observations: {observations}")
+            
+            # Recommendations
+            if recommendations:
+                analysis_parts.append("Here's what I recommend:")
+                for i, rec in enumerate(recommendations[:3], 1):
+                    analysis_parts.append(f"{i}. {rec}")
+            
+            # Encouraging closing
+            analysis_parts.append("Remember, early detection and proper care can make a big difference in your crop's success! 🌾💪")
+            
+            return "\n\n".join(analysis_parts)
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to generate analysis text: {str(e)}")
+            return f"Based on the visual analysis, your crop has a health score of {int(health_score)}/100 with {severity.value} severity. I've identified {', '.join(issues[:2]) if issues else 'some concerns'} that need attention."
+    
     async def _parse_analysis_response(self, response_text: str, metadata: Dict[str, Any]) -> ImageAnalysisResult:
         """
         Parse GPT-4o response into structured ImageAnalysisResult
@@ -917,6 +976,10 @@ class PerceptionAgent:
                     "Maintain current agricultural practices",
                     "Consider consulting local agricultural extension services"
                 ]
+            
+            # Generate analysis_text if not found in response
+            if not analysis_text:
+                analysis_text = self._generate_analysis_text(health_score, issues, severity, recommendations, observations)
             
             return ImageAnalysisResult(
                 detected_issues=issues,

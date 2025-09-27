@@ -309,7 +309,9 @@ class AgentCoordinator:
         Returns:
             Dictionary containing workflow results and status
         """
-        workflow_id = f"{session_id}_{datetime.utcnow().timestamp()}"
+        # Generate a proper workflow ID
+        import uuid
+        workflow_id = f"{session_id}_{str(uuid.uuid4())[:8]}"
         start_time = datetime.utcnow()
         
         # Initialize workflow state
@@ -1221,7 +1223,8 @@ class AgentCoordinator:
                 return json.dumps({"error": "Perception agent not available", "results": None})
             
             # Mock session data for tool execution
-            session_id = f"coord_{datetime.utcnow().timestamp()}"
+            import uuid
+            session_id = f"coord_{str(uuid.uuid4())[:8]}"
             user_input = {"images": images, "analysis_type": analysis_type, "crop_type": crop_type}
             
             results = await self._run_perception_agent(session_id, user_input, {})
@@ -1240,7 +1243,8 @@ class AgentCoordinator:
                 return json.dumps({"error": "Knowledge agent not available", "results": None})
             
             # Mock session data for tool execution
-            session_id = f"coord_{datetime.utcnow().timestamp()}"
+            import uuid
+            session_id = f"coord_{str(uuid.uuid4())[:8]}"
             user_input = {"query": query, "crop_type": crop_type}
             
             results = await self._run_knowledge_agent(session_id, user_input, {}, perception_results)
@@ -1259,7 +1263,8 @@ class AgentCoordinator:
                 return json.dumps({"error": "Email agent not available", "results": None})
             
             # Mock session data for tool execution
-            session_id = f"coord_{datetime.utcnow().timestamp()}"
+            import uuid
+            session_id = f"coord_{str(uuid.uuid4())[:8]}"
             user_input = {"recipient_email": recipient_email, "session_data": session_data}
             
             results = await self._run_email_agent(session_id, user_input, {}, 

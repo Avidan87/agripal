@@ -1,0 +1,86 @@
+---
+services:
+- type: web
+  name: agripal-ai
+  runtime: python
+  buildCommand: pip install -r requirements.txt
+  startCommand: python run_backend.py
+  plan: starter
+  region: oregon
+  autoDeploy: yes
+  envVars:
+  # Core App Configuration
+  - key: ENVIRONMENT
+    value: production
+  - key: HOST
+    value: 0.0.0.0
+  - key: PORT
+    value: 10000
+  - key: DEBUG
+    value: false
+  - key: SECRET_KEY
+    value: your-secret-key-change-in-production
+  - key: JWT_SECRET_KEY
+    value: O2SUuSq0wKu715VEUPqMRwvvo7iT4Oyz0PgOptzgWd97COwgwA3NkD40UadeXrzJ9lZX9uDWcawcP-W4IX0UzA
+  
+  # Security & CORS
+  - key: ENABLE_AUTH
+    value: false
+  - key: ENABLE_RATE_LIMITING
+    value: true
+  - key: ALLOWED_ORIGINS
+    value: "*"
+  - key: TRUSTED_HOSTS
+    value: "*"
+  
+  # AI Services - REQUIRED
+  - key: OPENAI_API_KEY
+    value: ${OPENAI_API_KEY}
+  - key: HF_TOKEN
+    value: ${HF_TOKEN}
+  
+  # Database - REQUIRED for production
+  - key: DATABASE_URL
+    value: ${DATABASE_URL}
+  
+  # Email Service - Optional but recommended
+  - key: SENDGRID_API_KEY
+    value: ${SENDGRID_API_KEY}
+  - key: SENDGRID_FROM_EMAIL
+    value: avi@aviagri.com
+  
+  # Weather API - Optional
+  - key: WEATHER_API_KEY
+    value: ${WEATHER_API_KEY}
+  
+  # Geocoding - Optional
+  - key: OPENCAGE_API_KEY
+    value: ${OPENCAGE_API_KEY}
+  
+  # Storage Configuration
+  - key: STORAGE_ENDPOINT
+    value: https://your-s3-endpoint.com
+  - key: STORAGE_ACCESS_KEY
+    value: your_s3_access_key
+  - key: STORAGE_SECRET_KEY
+    value: your_s3_secret_key
+  - key: STORAGE_BUCKET
+    value: agripal-storage
+  - key: STORAGE_SECURE
+    value: true
+  
+  # Redis Configuration
+  - key: REDIS_URL
+    value: your_redis_url_here
+  
+  # Agent Configuration
+  - key: PERCEPTION_AGENT_ENABLED
+    value: true
+  - key: KNOWLEDGE_AGENT_ENABLED
+    value: true
+  - key: EMAIL_AGENT_ENABLED
+    value: true
+  
+  # Logging
+  - key: LOG_LEVEL
+    value: INFO

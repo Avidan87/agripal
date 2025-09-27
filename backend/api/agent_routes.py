@@ -17,7 +17,7 @@ from ..models import AgentType
 from ..middleware.auth_middleware import get_current_user, get_current_user_optional, JWTAuthenticator
 from ..config import settings
 from ..database.connection import get_database_manager
-from ..database.services import SessionService
+from ..database.services import SessionService, UserService
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,28 @@ class LoginResponse(BaseModel):
     token_type: str = Field(default="bearer", description="Token type")
     expires_in: int = Field(..., description="Token expiration in seconds")
 
+class DatabaseStatusResponse(BaseModel):
+    """Database status response"""
+    available: bool = Field(..., description="Database availability status")
+    initialized: bool = Field(..., description="Database initialization status")
+    connection_healthy: bool = Field(..., description="Database connection health")
+    database_url: str = Field(..., description="Database connection URL")
+    error_message: Optional[str] = Field(None, description="Error message if any")
+    timestamp: datetime = Field(..., description="Status check timestamp")
+
+# Helpers
+async def _ensure_default_user_id() -> str:
+    """Ensure a default user exists (for unauthenticated flows) and return its ID as str."""
+    db_manager = await get_database_manager()
+    user_service = UserService(db_manager)
+    # Use a stable email so multiple calls reuse same user
+    default_email = "demo@agripal.local"
+    existing = await user_service.get_user_by_email(default_email)
+    if existing:
+        return str(existing.id)
+    created = await user_service.create_user(email=default_email, name="AgriPal Demo User")
+    return str(created.id)
+
 # Dependency for coordinator
 async def get_coordinator() -> AgentCoordinator:
     """Get coordinator instance"""
@@ -110,7 +132,8 @@ async def get_authenticated_user(request: Request) -> Optional[Dict[str, Any]]:
 PUBLIC_ENDPOINTS = {
     "/api/v1/agents/health",
     "/api/v1/agents/metrics",
-    "/api/v1/agents/auth/login"
+    "/api/v1/agents/auth/login",
+    "/api/v1/agents/database/status"
 }
 
 # Health and status endpoints
@@ -153,6 +176,53 @@ async def get_coordinator_metrics(
     except Exception as e:
         logger.error(f"❌ Metrics retrieval failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Metrics retrieval failed: {str(e)}")
+
+@router.get("/database/status", response_model=DatabaseStatusResponse)
+async def get_database_status(
+    request: Request,
+    user: Optional[Dict[str, Any]] = Depends(get_authenticated_user)
+):
+    """
+    Check database connection status and health
+    Public endpoint - no authentication required
+    """
+    try:
+        db_manager = await get_database_manager()
+        
+        # Check basic availability
+        is_available = db_manager.is_available()
+        is_initialized = db_manager._is_initialized
+        connection_healthy = False
+        error_message = None
+        
+        # Test actual connection if available
+        if is_available:
+            try:
+                connection_healthy = await db_manager.health_check()
+            except Exception as health_error:
+                error_message = f"Health check failed: {str(health_error)}"
+                connection_healthy = False
+        else:
+            error_message = "Database not initialized or failed to initialize"
+        
+        return DatabaseStatusResponse(
+            available=is_available,
+            initialized=is_initialized,
+            connection_healthy=connection_healthy,
+            database_url=db_manager.database_url,
+            error_message=error_message,
+            timestamp=datetime.utcnow()
+        )
+    except Exception as e:
+        logger.error(f"❌ Database status check failed: {str(e)}")
+        return DatabaseStatusResponse(
+            available=False,
+            initialized=False,
+            connection_healthy=False,
+            database_url="unknown",
+            error_message=f"Status check failed: {str(e)}",
+            timestamp=datetime.utcnow()
+        )
 
 # Authentication endpoints
 @router.post("/auth/login", response_model=LoginResponse)
@@ -277,7 +347,9 @@ async def analyze_images(
             "analysis_type": analysis_request.analysis_type
         }
         
-        session_id = analysis_request.session_id or f"img_{datetime.utcnow().timestamp()}"
+        # Generate a proper UUID for session_id if not provided
+        import uuid
+        session_id = analysis_request.session_id or str(uuid.uuid4())
         
         # Execute workflow
         workflow_result = await coord.execute_workflow(
@@ -327,7 +399,9 @@ async def search_knowledge(
             "user_email": user.get("email") if user else None
         }
         
-        session_id = request.session_id or f"search_{datetime.utcnow().timestamp()}"
+        # Generate a proper UUID for session_id if not provided
+        import uuid
+        session_id = request.session_id or str(uuid.uuid4())
         
         # Execute workflow
         workflow_result = await coord.execute_workflow(
@@ -340,10 +414,44 @@ async def search_knowledge(
         # Persist conversation messages
         try:
             db_manager = await get_database_manager()
+            
+            # Check if database is actually available before trying to use it
+            if not db_manager.is_available():
+                logger.warning("Database not available, skipping conversation persistence")
+                raise Exception("Database not available")
+            
             session_service = SessionService(db_manager)
+            
+            # Create session first if it doesn't exist
+            try:
+                from uuid import UUID as _UUID
+                # Ensure types are UUID objects for DB layer
+                session_uuid = _UUID(session_id)
+                existing_session = await session_service.get_session_by_id(session_uuid)
+                if not existing_session:
+                    # Create a new session with the same session_id
+                    from uuid import UUID as _UUID
+                    default_user_id_str = await _ensure_default_user_id()
+                    default_user_id = _UUID(default_user_id_str)
+                    
+                    # Create session with specific ID
+                    async with db_manager.get_session() as db_session:
+                        from backend.database.models import ChatSession
+                        chat_session = ChatSession(
+                            id=session_uuid,  # Use the same session_id
+                            user_id=default_user_id,
+                            session_data={"workflow_type": "knowledge_search_only"}
+                        )
+                        db_session.add(chat_session)
+                        await db_session.commit()
+                        logger.info(f"✅ Created chat session: {session_id}")
+            except Exception as session_create_error:
+                logger.warning(f"Session creation failed: {str(session_create_error)}")
+                raise session_create_error  # Re-raise to trigger fallback
+            
             # Save user message
             await session_service.add_message(
-                session_id=session_id,
+                session_id=session_uuid,
                 message_type="user",
                 content=request.query,
                 metadata={"crop_type": request.crop_type, "location": request.location}
@@ -358,7 +466,7 @@ async def search_knowledge(
             )
             if display_text:
                 await session_service.add_message(
-                    session_id=session_id,
+                    session_id=session_uuid,
                     message_type="assistant",
                     content=display_text,
                     metadata={"agents_executed": workflow_result.get("agents_executed", [])}
@@ -434,7 +542,9 @@ async def send_email_report(
             "session_data": request.session_data
         }
         
-        session_id = request.session_id or f"email_{datetime.utcnow().timestamp()}"
+        # Generate a proper UUID for session_id if not provided
+        import uuid
+        session_id = request.session_id or str(uuid.uuid4())
         
         # Execute workflow
         workflow_result = await coord.execute_workflow(
@@ -503,7 +613,9 @@ async def full_consultation(
             "user_email": user.get("email") if user else None
         }
         
-        session_id = request.session_id or f"consultation_{datetime.utcnow().timestamp()}"
+        # Generate a proper UUID for session_id if not provided
+        import uuid
+        session_id = request.session_id or str(uuid.uuid4())
         
         # Execute full consultation workflow
         workflow_result = await coord.execute_workflow(
@@ -570,7 +682,9 @@ async def perception_to_knowledge_workflow(
             "location": location
         }
         
-        session_id = f"perception_knowledge_{datetime.utcnow().timestamp()}"
+        # Generate a proper UUID for session_id
+        import uuid
+        session_id = str(uuid.uuid4())
         
         # Execute workflow
         workflow_result = await coord.execute_workflow(
@@ -583,9 +697,43 @@ async def perception_to_knowledge_workflow(
         # Persist conversation (user query and assistant reply)
         try:
             db_manager = await get_database_manager()
+            
+            # Check if database is actually available before trying to use it
+            if not db_manager.is_available():
+                logger.warning("Database not available, skipping conversation persistence")
+                raise Exception("Database not available")
+            
             session_service = SessionService(db_manager)
+            
+            # Create session first if it doesn't exist
+            try:
+                from uuid import UUID as _UUID
+                session_uuid = _UUID(session_id)
+                existing_session = await session_service.get_session_by_id(session_uuid)
+                if not existing_session:
+                    # Create a new session with the same session_id
+                    # In a real app, you'd get user_id from authentication
+                    from uuid import UUID as _UUID
+                    default_user_id_str = await _ensure_default_user_id()
+                    default_user_id = _UUID(default_user_id_str)
+                    
+                    # Create session with specific ID
+                    async with db_manager.get_session() as db_session:
+                        from backend.database.models import ChatSession
+                        chat_session = ChatSession(
+                            id=session_uuid,  # Use the same session_id
+                            user_id=default_user_id,
+                            session_data={"workflow_type": "perception_to_knowledge"}
+                        )
+                        db_session.add(chat_session)
+                        await db_session.commit()
+                        logger.info(f"✅ Created chat session: {session_id}")
+            except Exception as session_create_error:
+                logger.warning(f"Session creation failed: {str(session_create_error)}")
+                raise session_create_error  # Re-raise to trigger fallback
+            
             await session_service.add_message(
-                session_id=session_id,
+                session_id=session_uuid,
                 message_type="user",
                 content=query,
                 metadata={"crop_type": crop_type, "location": location, "images_count": len(images)}
@@ -599,13 +747,37 @@ async def perception_to_knowledge_workflow(
             )
             if display_text:
                 await session_service.add_message(
-                    session_id=session_id,
+                    session_id=session_uuid,
                     message_type="assistant",
                     content=display_text,
                     metadata={"agents_executed": workflow_result.get("agents_executed", [])}
                 )
         except Exception as e:
             logger.warning(f"Conversation persistence skipped: {str(e)}")
+            # Fallback to in-memory storage
+            from ..memory_storage import conversation_storage
+            # Save user message
+            conversation_storage.add_message(
+                session_id=session_id,
+                message_type="user",
+                content=query,
+                metadata={"crop_type": crop_type, "location": location, "images_count": len(images)}
+            )
+            # Save assistant response
+            results = workflow_result.get("results", {}) if isinstance(workflow_result, dict) else {}
+            display_text = (
+                results.get("display_text")
+                or (results.get("knowledge") or {}).get("display_text")
+                or (results.get("knowledge") or {}).get("contextual_advice")
+                or ""
+            )
+            if display_text:
+                conversation_storage.add_message(
+                    session_id=session_id,
+                    message_type="assistant",
+                    content=display_text,
+                    metadata={"agents_executed": workflow_result.get("agents_executed", [])}
+                )
 
         # Extract display_text from results to include at top level for UI compatibility
         results = workflow_result.get("results", {})
@@ -652,7 +824,9 @@ async def batch_process_requests(
         for i, req in enumerate(requests):
             try:
                 workflow_type = WorkflowType(req.get("workflow_type", "full_consultation"))
-                session_id = req.get("session_id", f"batch_{i}_{datetime.utcnow().timestamp()}")
+                # Generate a proper UUID for session_id if not provided
+                import uuid
+                session_id = req.get("session_id", str(uuid.uuid4()))
                 
                 result = await coord.execute_workflow(
                     workflow_type=workflow_type,

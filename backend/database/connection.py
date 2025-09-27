@@ -54,10 +54,7 @@ class DatabaseManager:
                 poolclass=NullPool,  # Use asyncpg's connection pooling
                 pool_pre_ping=True,  # Verify connections before use
                 pool_recycle=3600,   # Recycle connections every hour
-                connect_args=connect_args,
-                pool_timeout=30,     # Connection timeout
-                pool_size=5,         # Max pool size
-                max_overflow=10      # Max overflow connections
+                connect_args=connect_args
             )
             
             # Create session factory
