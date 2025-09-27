@@ -4,7 +4,7 @@ uvicorn
 
 # Database and async support
 asyncpg
-sqlalchemy
+sqlalchemy[asyncio]
 psycopg2-binary
 
 # Security and authentication

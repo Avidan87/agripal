@@ -74,6 +74,18 @@ coordinator = AgentCoordinator()
 async def startup_event():
     """Initialize services on startup"""
     logger.info("🚀 Starting AgriPal backend services with AI coordinator...")
+    
+    # Test database connection on startup
+    try:
+        from .database.connection import get_database_manager
+        db_manager = await get_database_manager()
+        if db_manager.is_available():
+            logger.info("✅ Database connection established successfully")
+        else:
+            logger.warning("⚠️ Database connection failed, running with fallback storage")
+    except Exception as e:
+        logger.warning(f"⚠️ Database startup check failed: {str(e)}")
+    
     # AI coordinator initializes automatically
     await asyncio.sleep(2)  # Give time for agents to initialize
     logger.info("✅ AgriPal backend services with AI agents ready!")
@@ -82,6 +94,16 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on shutdown"""
     logger.info("🛑 Shutting down AgriPal backend services...")
+    
+    # Cleanup database connections
+    try:
+        from .database.connection import close_database
+        await close_database()
+        logger.info("🔌 Database connections closed")
+    except Exception as e:
+        logger.warning(f"⚠️ Database cleanup warning: {str(e)}")
+    
+    # Cleanup AI coordinator
     await coordinator.cleanup()
     logger.info("✅ AgriPal backend services shut down gracefully!")
 
@@ -268,11 +290,20 @@ async def health_check():
         # Use AI coordinator health check
         agent_health = await coordinator.health_check()
         
+        # Database health check
+        database_healthy = False
+        try:
+            from .database.connection import get_database_manager
+            db_manager = await get_database_manager()
+            database_healthy = await db_manager.health_check()
+        except Exception as e:
+            logger.warning(f"⚠️ Database health check failed: {str(e)}")
+        
         # Combine with any additional system checks
         checks = {
             **agent_health,
             "api": True,  # API is responding
-            "database": True  # Add your DB check here
+            "database": database_healthy
         }
         
         overall_status = "healthy" if all(checks.values()) else "unhealthy"

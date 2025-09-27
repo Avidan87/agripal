@@ -510,13 +510,117 @@ Always provide:
                 tools=tools
             )
 
-            logger.info("✅ Knowledge Agent successfully initialized with RAG tools")
+            # Create tool mapping for proper function execution
+            self.tool_mapping = {
+                "search_agricultural_knowledge": self._tool_search_knowledge,
+                "get_contextual_data": self._tool_get_contextual_data,
+                "get_location_recommendations": self._tool_get_weather_recommendations,
+                "synthesize_recommendations": self._tool_synthesize_recommendations,
+                "fetch_huggingface_data": self._tool_fetch_huggingface_data,
+                "populate_knowledge_base": self._tool_populate_knowledge_base,
+                "langchain_enhanced_search": self._tool_langchain_enhanced_search,
+                "manage_hf_datasets": self._tool_manage_hf_datasets
+            }
+
+            logger.info("✅ Knowledge Agent successfully initialized with RAG tools and tool mapping")
 
         except Exception as e:
             logger.error(f"❌ Failed to initialize Knowledge Agent: {str(e)}")
             logger.error(f"❌ Error type: {type(e).__name__}")
             logger.error(f"❌ Error details: {str(e)}")
             self.agent = None
+    
+    async def _fallback_direct_tool_calls(self, user_query: str, crop_type: str, user_context: Dict[str, Any], perception_results: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Fallback method for direct tool calls when agent.run is not available
+        """
+        try:
+            # Use direct tool call for knowledge search
+            search_result = await self._tool_search_knowledge(
+                query=user_query,
+                crop_type=crop_type,
+                region=user_context.get('location', ''),
+                limit=self.max_search_results
+            )
+            
+            # Parse the JSON result
+            search_data = json.loads(search_result)
+            
+            # Optionally enrich with weather context when location is available
+            weather_block = None
+            user_location_for_weather = user_context.get('location') if user_context else None
+            if user_location_for_weather and isinstance(user_location_for_weather, str) and user_location_for_weather.strip():
+                try:
+                    weather_json = await self._tool_get_weather_recommendations(
+                        location=user_location_for_weather.strip(),
+                        crop_type=crop_type,
+                        days_ahead=7
+                    )
+                    try:
+                        weather_block = json.loads(weather_json) if isinstance(weather_json, str) else weather_json
+                    except json.JSONDecodeError:
+                        weather_block = {"error": "Invalid weather data"}
+                except Exception as wx_err:
+                    logger.warning(f"⚠️ Weather enrichment failed: {wx_err}")
+
+            # Create a structured response
+            documents = search_data.get("documents", [])
+            if documents:
+                # If we have documents, create a proper response
+                content = f"Based on my search, I found {len(documents)} relevant sources about {user_query}. "
+                if crop_type:
+                    content += f"Here's what I found about {crop_type}: "
+                
+                # Add key information from the documents
+                for i, doc in enumerate(documents[:3]):  # Show top 3 results
+                    content += f"\n\n{i+1}. {doc.get('content', '')[:200]}..."
+            else:
+                # No documents found, provide helpful fallback
+                content = f"I searched for information about '{user_query}' but didn't find specific results in my knowledge base. "
+                content += "You can try rephrasing your question or providing more specific details about your situation."
+                
+                # Add dynamic expert recommendation if appropriate
+                try:
+                    from backend.utils.expert_recommendations import expert_system
+                    expert_rec = expert_system.get_expert_recommendation(
+                        issue_type=user_query,
+                        crop_type=crop_type,
+                        location=user_context.get('location') if user_context else None,
+                        confidence=0.2,  # Low confidence since no results found
+                        severity="medium"
+                    )
+                    if expert_rec:
+                        content += f"\n\n{expert_rec}"
+                except ImportError:
+                    logger.warning("⚠️ Expert recommendations module not available")
+            
+            # Append concise weather summary if available
+            if weather_block:
+                combined_recs = weather_block.get("combined_recommendations") or weather_block.get("weather_recommendations") or []
+                if combined_recs:
+                    content += "\n\nConsidering the weather for your location:"
+                    for rec in combined_recs[:3]:
+                        content += f"\n• {rec}"
+            
+            return {
+                "content": content,
+                "sources": documents,
+                "metadata": {
+                    "query": user_query,
+                    "crop_type": crop_type,
+                    "search_results_count": len(documents),
+                    "weather_included": bool(weather_block)
+                }
+            }
+            
+        except Exception as tool_error:
+            logger.warning(f"⚠️ Direct tool call failed: {tool_error}")
+            # Fallback to basic response
+            return {
+                "content": f"Knowledge search for '{user_query}' is temporarily unavailable. Please try again later.",
+                "sources": [],
+                "metadata": {"error": str(tool_error)}
+            }
     
     async def process(self, message: AgentMessage) -> AgentResponse:
         """
@@ -629,100 +733,51 @@ Always provide:
                 perception_results
             )
             
-            # Use direct tool calls instead of agent.run (due to SDK version compatibility)
-            if self.agent:
-                # Try to use the agent if available, but fall back to direct tool call
+            # Use proper agent execution with tool mapping
+            if self.agent and hasattr(self.agent, "run"):
                 try:
-                    # For now, use direct tool call since agent.run is not available
-                    search_result = await self._tool_search_knowledge(
-                        query=user_query,
-                        crop_type=crop_type,
-                        region=user_context.get('location', ''),
-                        limit=self.max_search_results
+                    # Use agent.run with proper tool context
+                    run_result = await self.agent.run(
+                        message=agent_prompt,
+                        tools_context={
+                            "user_query": user_query,
+                            "crop_type": crop_type,
+                            "user_context": user_context,
+                            "perception_results": perception_results,
+                            "session_id": message.session_id
+                        }
                     )
                     
-                    # Parse the JSON result
-                    search_data = json.loads(search_result)
-                    
-                    # Optionally enrich with weather context when location is available
-                    weather_block = None
-                    user_location_for_weather = user_context.get('location') if user_context else None
-                    if user_location_for_weather and isinstance(user_location_for_weather, str) and user_location_for_weather.strip():
-                        try:
-                            weather_json = await self._tool_get_weather_recommendations(
-                                location=user_location_for_weather.strip(),
-                                crop_type=crop_type,
-                                days_ahead=7
-                            )
-                            try:
-                                weather_block = json.loads(weather_json) if isinstance(weather_json, str) else weather_json
-                            except json.JSONDecodeError:
-                                weather_block = {"error": "Invalid weather data"}
-                        except Exception as wx_err:
-                            logger.warning(f"⚠️ Weather enrichment failed: {wx_err}")
-
-                    # Create a mock agent response for compatibility
-                    documents = search_data.get("documents", [])
-                    if documents:
-                        # If we have documents, create a proper response
-                        content = f"Based on my search, I found {len(documents)} relevant sources about {user_query}. "
-                        if crop_type:
-                            content += f"Here's what I found about {crop_type}: "
-                        
-                        # Add key information from the documents
-                        for i, doc in enumerate(documents[:3]):  # Show top 3 results
-                            content += f"\n\n{i+1}. {doc.get('content', '')[:200]}..."
+                    # Parse agent response into structured format
+                    if hasattr(run_result, 'content'):
+                        # Handle agent response object
+                        content = run_result.content
+                        sources = getattr(run_result, 'sources', [])
+                        metadata = getattr(run_result, 'metadata', {})
                     else:
-                        # No documents found, provide helpful fallback
-                        content = f"I searched for information about '{user_query}' but didn't find specific results in my knowledge base. "
-                        content += "You can try rephrasing your question or providing more specific details about your situation."
-                        
-                        # Add dynamic expert recommendation if appropriate
-                        from backend.utils.expert_recommendations import expert_system
-                        expert_rec = expert_system.get_expert_recommendation(
-                            issue_type=user_query,
-                            crop_type=crop_type,
-                            location=user_context.get('location') if user_context else None,
-                            confidence=0.2,  # Low confidence since no results found
-                            severity="medium"
-                        )
-                        if expert_rec:
-                            content += f"\n\n{expert_rec}"
-                    
-                    # Append concise weather summary if available
-                    if weather_block:
-                        combined_recs = weather_block.get("combined_recommendations") or weather_block.get("weather_recommendations") or []
-                        if combined_recs:
-                            content += "\n\nConsidering the weather for your location:"
-                            for rec in combined_recs[:3]:
-                                content += f"\n• {rec}"
+                        # Handle dict response
+                        content = run_result.get('content', '')
+                        sources = run_result.get('sources', [])
+                        metadata = run_result.get('metadata', {})
                     
                     run_result = {
                         "content": content,
-                        "sources": documents,
-                        "metadata": {
-                            "query": user_query,
-                            "crop_type": crop_type,
-                            "search_results_count": len(documents),
-                            "weather_included": bool(weather_block)
-                        }
+                        "sources": sources,
+                        "metadata": metadata
                     }
                     
-                except Exception as tool_error:
-                    logger.warning(f"⚠️ Direct tool call failed: {tool_error}")
-                    # Fallback to basic response
-                    run_result = {
-                        "content": f"Knowledge search for '{user_query}' is temporarily unavailable. Please try again later.",
-                        "sources": [],
-                        "metadata": {"error": str(tool_error)}
-                    }
+                except Exception as agent_error:
+                    logger.warning(f"⚠️ Agent execution failed: {agent_error}, falling back to direct tool calls")
+                    # Fallback to direct tool calls
+                    run_result = await self._fallback_direct_tool_calls(
+                        user_query, crop_type, user_context, perception_results
+                    )
             else:
-                # No agent available, return basic response
-                run_result = {
-                    "content": f"Knowledge search for '{user_query}' is temporarily unavailable. Agent not initialized.",
-                    "sources": [],
-                    "metadata": {"error": "Agent not available"}
-                }
+                # No agent available or agent.run not supported, use direct tool calls
+                logger.info("ℹ️ Using direct tool calls (agent.run not available)")
+                run_result = await self._fallback_direct_tool_calls(
+                    user_query, crop_type, user_context, perception_results
+                )
             
             # Parse agent response into structured format
             knowledge_result = await self._parse_agent_response(run_result, user_query)

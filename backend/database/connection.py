@@ -15,6 +15,12 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
+try:
+    import asyncpg
+except ImportError:
+    logger.warning("⚠️ asyncpg not available, database functionality may be limited")
+    asyncpg = None
+
 class DatabaseManager:
     """Async database connection manager with connection pooling"""
     
@@ -31,6 +37,16 @@ class DatabaseManager:
         try:
             logger.info("🔄 Initializing database connection...")
             
+            # Handle SSL configuration for production environments like Render
+            connect_args = {}
+            if settings.ENVIRONMENT == "production":
+                connect_args = {
+                    "ssl": "require",
+                    "server_settings": {
+                        "jit": "off"
+                    }
+                }
+            
             # Create async engine with connection pooling
             self.engine = create_async_engine(
                 self.database_url,
@@ -38,6 +54,10 @@ class DatabaseManager:
                 poolclass=NullPool,  # Use asyncpg's connection pooling
                 pool_pre_ping=True,  # Verify connections before use
                 pool_recycle=3600,   # Recycle connections every hour
+                connect_args=connect_args,
+                pool_timeout=30,     # Connection timeout
+                pool_size=5,         # Max pool size
+                max_overflow=10      # Max overflow connections
             )
             
             # Create session factory
@@ -49,6 +69,9 @@ class DatabaseManager:
             
             # Test connection
             await self._test_connection()
+            
+            # Create tables if they don't exist (for production deployments)
+            await self._ensure_tables_exist()
             
             self._is_initialized = True
             logger.info("✅ Database connection initialized successfully")
@@ -62,11 +85,24 @@ class DatabaseManager:
         """Test database connection"""
         try:
             async with self.engine.begin() as conn:
-                await conn.execute("SELECT 1")
+                from sqlalchemy import text
+                await conn.execute(text("SELECT 1"))
             logger.info("✅ Database connection test passed")
         except Exception as e:
             logger.error(f"❌ Database connection test failed: {str(e)}")
             raise
+    
+    async def _ensure_tables_exist(self):
+        """Ensure database tables exist (create if missing)"""
+        try:
+            from .models import Base
+            async with self.engine.begin() as conn:
+                # Create all tables
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("✅ Database tables verified/created")
+        except Exception as e:
+            logger.warning(f"⚠️ Table creation check failed: {str(e)}")
+            # Don't raise - this might fail in some environments but database can still work
     
     @asynccontextmanager
     async def get_session(self) -> AsyncGenerator[AsyncSession, None]:
@@ -92,7 +128,8 @@ class DatabaseManager:
         
         try:
             async with self.engine.begin() as conn:
-                result = await conn.execute(query, args)
+                from sqlalchemy import text
+                result = await conn.execute(text(query), args)
                 return result
         except Exception as e:
             logger.error(f"❌ Raw SQL execution failed: {str(e)}")
@@ -105,7 +142,8 @@ class DatabaseManager:
         
         try:
             async with self.engine.begin() as conn:
-                result = await conn.execute(query, args)
+                from sqlalchemy import text
+                result = await conn.execute(text(query), args)
                 return result.fetchone()
         except Exception as e:
             logger.error(f"❌ Fetch one failed: {str(e)}")
@@ -118,7 +156,8 @@ class DatabaseManager:
         
         try:
             async with self.engine.begin() as conn:
-                result = await conn.execute(query, args)
+                from sqlalchemy import text
+                result = await conn.execute(text(query), args)
                 return result.fetchall()
         except Exception as e:
             logger.error(f"❌ Fetch all failed: {str(e)}")
@@ -131,7 +170,8 @@ class DatabaseManager:
                 return False
             
             async with self.engine.begin() as conn:
-                await conn.execute("SELECT 1")
+                from sqlalchemy import text
+                await conn.execute(text("SELECT 1"))
             return True
         except Exception as e:
             logger.error(f"❌ Database health check failed: {str(e)}")
@@ -164,7 +204,9 @@ async def get_database_manager() -> DatabaseManager:
             await _database_manager.initialize()
         except Exception as e:
             logger.warning(f"⚠️ Database initialization failed, will use fallback storage: {str(e)}")
-            # Don't raise the exception, let the calling code handle it with fallback
+            # Mark initialization as failed but don't raise - allow fallback
+            _database_manager._initialization_failed = True
+            _database_manager._is_initialized = False
     
     return _database_manager
 
