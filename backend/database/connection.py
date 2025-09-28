@@ -90,6 +90,9 @@ class DatabaseManager:
                 echo=settings.DATABASE_ECHO,
                 pool_pre_ping=True,  # Verify connections before use
                 pool_recycle=300,    # Recycle connections every 5 minutes (Render free plan timeout)
+                pool_size=1,        # Minimal pool size for free tier
+                max_overflow=0,     # No overflow connections for free tier
+                pool_timeout=30,    # Connection timeout
                 connect_args=connect_args
             )
             
@@ -118,8 +121,8 @@ class DatabaseManager:
     
     async def _test_connection(self):
         """Test database connection with retry logic for Render free plan"""
-        max_retries = 3
-        retry_delay = 1
+        max_retries = 5
+        retry_delay = 2
         
         for attempt in range(max_retries):
             try:
@@ -129,10 +132,18 @@ class DatabaseManager:
                 logger.info("✅ Database connection test passed")
                 return
             except Exception as e:
+                error_msg = str(e).lower()
+                if "connection was closed" in error_msg or "connection refused" in error_msg:
+                    logger.warning(f"⚠️ Database connection closed/refused (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                elif "timeout" in error_msg:
+                    logger.warning(f"⚠️ Database connection timeout (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                else:
+                    logger.warning(f"⚠️ Database connection test failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                
                 if attempt < max_retries - 1:
-                    logger.warning(f"⚠️ Database connection test failed (attempt {attempt + 1}/{max_retries}): {str(e)}. Retrying in {retry_delay}s...")
+                    logger.info(f"🔄 Retrying in {retry_delay}s...")
                     await asyncio.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
+                    retry_delay = min(retry_delay * 1.5, 10)  # Gradual backoff, max 10s
                 else:
                     logger.error(f"❌ Database connection test failed after {max_retries} attempts: {str(e)}")
                     raise
