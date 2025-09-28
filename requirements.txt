@@ -5,8 +5,7 @@ uvicorn
 # Database and async support
 asyncpg
 sqlalchemy[asyncio]
-psycopg2-binary
-
+psycopg[binary]>=3.0.0
 # Security and authentication
 python-jose
 passlib[bcrypt]

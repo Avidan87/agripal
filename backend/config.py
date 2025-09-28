@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     TRUSTED_HOSTS: str = "*.onrender.com,*.render.com,localhost,127.0.0.1"  # Fixed for Render deployment
     
     # Database Configuration
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/agripal"
+    DATABASE_URL: str = "postgresql+psycopg://postgres:postgres@localhost:5432/agripal"
     DATABASE_ECHO: bool = False
     
     # Redis Configuration

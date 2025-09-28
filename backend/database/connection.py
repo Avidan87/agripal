@@ -8,7 +8,6 @@ from typing import Optional, AsyncGenerator
 from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.pool import QueuePool
 
 from ..config import settings
 
@@ -41,9 +40,9 @@ class DatabaseManager:
                     else:
                         self.database_url += "?sslmode=require"
                 
-                # Configure SSL settings for asyncpg - Render requires SSL
+                # Configure SSL settings for psycopg - Render requires SSL
                 connect_args = {
-                    "ssl": "require",  # Force SSL connection for Render
+                    "sslmode": "require",  # Force SSL connection for Render
                     "server_settings": {
                         "jit": "off",
                         "application_name": "agripal_backend"
@@ -55,7 +54,7 @@ class DatabaseManager:
                     logger.info("🔒 Configuring SSL for Render PostgreSQL connection")
                     # Use simple SSL configuration that works with Render
                     connect_args = {
-                        "ssl": "require",  # Render PostgreSQL requires SSL
+                        "sslmode": "require",  # Render PostgreSQL requires SSL
                         "server_settings": {
                             "jit": "off",
                             "application_name": "agripal_backend"
@@ -75,6 +74,15 @@ class DatabaseManager:
                             user, _ = user_pass.split(":", 1)
                             safe_url = f"{protocol}://{user}:***@{host_db}"
             logger.info(f"🔗 Database URL: {safe_url}")
+            
+            # Ensure the database URL uses the correct async driver
+            if not self.database_url.startswith("postgresql+psycopg://"):
+                if self.database_url.startswith("postgresql://"):
+                    # Replace postgresql:// with postgresql+psycopg:// for async driver
+                    self.database_url = self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+                elif self.database_url.startswith("postgresql+asyncpg://"):
+                    # Replace asyncpg with psycopg for better compatibility
+                    self.database_url = self.database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
             
             # Create async engine with connection pooling optimized for Render free plan
             self.engine = create_async_engine(
