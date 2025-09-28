@@ -1,0 +1,18 @@
+# 🌾 AgriPal Frontend Dependencies
+# Gradio UI framework for the agricultural assistant interface
+
+# Core UI Framework
+gradio>=4.0.0
+
+# HTTP Client for API communication
+aiohttp>=3.8.0
+
+# Image processing and handling
+Pillow>=9.0.0
+
+# File upload handling
+python-multipart>=0.0.5
+
+# Additional utilities
+requests>=2.28.0
+
