@@ -216,10 +216,10 @@ class KnowledgeAgent:
                     # Add SSL parameter to URL for Render PostgreSQL
                     if settings.ENVIRONMENT == "production" and ("render.com" in asyncpg_url or "onrender.com" in asyncpg_url):
                         if "?" in asyncpg_url:
-                            asyncpg_url += "&ssl=true"
+                            asyncpg_url += "&sslmode=require"
                         else:
-                            asyncpg_url += "?ssl=true"
-                        logger.info("🔒 Added ssl=true parameter to database URL for Render")
+                            asyncpg_url += "?sslmode=require"
+                        logger.info("🔒 Added sslmode=require parameter to database URL for Render")
                     
                     logger.info(f"🔗 Attempting PostgreSQL connection to: {asyncpg_url.split('@')[1] if '@' in asyncpg_url else 'hidden'}")
                     
@@ -293,9 +293,9 @@ class KnowledgeAgent:
                     # Add SSL parameter to fallback URL for Render PostgreSQL
                     if settings.ENVIRONMENT == "production" and ("render.com" in fallback_url or "onrender.com" in fallback_url):
                         if "?" in fallback_url:
-                            fallback_url += "&ssl=true"
+                            fallback_url += "&sslmode=require"
                         else:
-                            fallback_url += "?ssl=true"
+                            fallback_url += "?sslmode=require"
                     
                     logger.warning(f"⚠️ First PostgreSQL connection attempt failed: {str(first_error)}. Trying fallback...")
                     
