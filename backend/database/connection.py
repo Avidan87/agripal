@@ -32,19 +32,32 @@ class DatabaseManager:
             # Handle SSL configuration for production environments like Render
             connect_args = {}
             if settings.ENVIRONMENT == "production":
-                # For Render PostgreSQL, SSL is handled via URL parameters
-                # Don't add ssl to connect_args when sslmode is in URL
-                connect_args = {
-                    "server_settings": {
-                        "jit": "off"
-                    }
-                }
+                # For Render PostgreSQL, SSL is required
                 # Ensure SSL is properly configured for Render
                 if "sslmode" not in self.database_url:
                     if "?" in self.database_url:
                         self.database_url += "&sslmode=require"
                     else:
                         self.database_url += "?sslmode=require"
+                
+                # Configure SSL settings for asyncpg with multiple fallback options
+                connect_args = {
+                    "ssl": "require",  # Force SSL connection
+                    "server_settings": {
+                        "jit": "off"
+                    }
+                }
+                
+                # Additional SSL configuration for Render compatibility
+                if "render.com" in self.database_url or "onrender.com" in self.database_url:
+                    # Render-specific SSL configuration
+                    connect_args.update({
+                        "ssl": "require",
+                        "server_settings": {
+                            "jit": "off",
+                            "application_name": "agripal_backend"
+                        }
+                    })
             
             # Log the database URL for debugging (without password)
             safe_url = self.database_url

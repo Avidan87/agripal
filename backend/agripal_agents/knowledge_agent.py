@@ -212,11 +212,23 @@ class KnowledgeAgent:
                 try:
                     # Convert SQLAlchemy URL to asyncpg format
                     asyncpg_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+                    
+                    # Configure SSL for Render PostgreSQL
+                    ssl_config = None
+                    if settings.ENVIRONMENT == "production":
+                        ssl_config = "require"  # Force SSL for Render
+                        
+                        # Additional SSL configuration for Render compatibility
+                        if "render.com" in asyncpg_url or "onrender.com" in asyncpg_url:
+                            # Use more permissive SSL settings for Render
+                            ssl_config = "prefer"  # Try SSL first, fallback to non-SSL
+                    
                     self.postgres_pool = await asyncpg.create_pool(
                         asyncpg_url,
                         min_size=2,
                         max_size=10,
-                        command_timeout=60
+                        command_timeout=60,
+                        ssl=ssl_config
                     )
                     logger.info("✅ PostgreSQL connection pool created")
                 except Exception as first_error:
@@ -225,11 +237,22 @@ class KnowledgeAgent:
                     logger.warning(f"⚠️ First PostgreSQL connection attempt failed: {str(first_error)}. Trying fallback...")
                     
                     try:
+                        # Configure SSL for fallback connection too
+                        ssl_config = None
+                        if settings.ENVIRONMENT == "production":
+                            ssl_config = "require"
+                            
+                            # Additional SSL configuration for Render compatibility
+                            if "render.com" in fallback_url or "onrender.com" in fallback_url:
+                                # Use more permissive SSL settings for Render
+                                ssl_config = "prefer"  # Try SSL first, fallback to non-SSL
+                            
                         self.postgres_pool = await asyncpg.create_pool(
                             fallback_url,
                             min_size=2,
                             max_size=10,
-                            command_timeout=60
+                            command_timeout=60,
+                            ssl=ssl_config
                         )
                         logger.info("✅ PostgreSQL connection pool created with fallback database")
                     except Exception as fallback_error:
@@ -241,6 +264,8 @@ class KnowledgeAgent:
         except Exception as e:
             logger.error(f"❌ Failed to setup PostgreSQL: {str(e)}")
             self.postgres_pool = None
+            # Don't raise the exception - allow the agent to work without PostgreSQL
+            logger.warning("⚠️ Knowledge Agent will operate without PostgreSQL connection")
     
     async def _setup_huggingface(self):
         """

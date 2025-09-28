@@ -2,6 +2,7 @@
 ⚙️ AgriPal Configuration Management
 Centralized settings and environment variable management.
 """
+import os
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from typing import List
@@ -17,6 +18,13 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    
+    # Auto-detect production environment
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Auto-detect if running on Render
+        if os.getenv("RENDER") or "render.com" in os.getenv("HOST", ""):
+            self.ENVIRONMENT = "production"
     
     # Security
     SECRET_KEY: str = "your-secret-key-change-in-production"
