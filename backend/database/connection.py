@@ -58,11 +58,7 @@ class DatabaseManager:
                 
                 # Configure SSL settings for psycopg - Supabase requires SSL
                 connect_args = {
-                    "sslmode": "require",  # Force SSL connection for Supabase
-                    "server_settings": {
-                        "jit": "off",
-                        "application_name": "agripal_backend"
-                    }
+                    "sslmode": "require"  # Force SSL connection for Supabase
                 }
                 
                 # Supabase-specific SSL configuration
@@ -70,11 +66,7 @@ class DatabaseManager:
                     logger.info("🔒 Configuring SSL for Supabase PostgreSQL connection")
                     # Use SSL configuration optimized for Supabase
                     connect_args = {
-                        "sslmode": "require",  # Supabase PostgreSQL requires SSL
-                        "server_settings": {
-                            "jit": "off",
-                            "application_name": "agripal_backend"
-                        }
+                        "sslmode": "require"  # Supabase PostgreSQL requires SSL
                     }
             
             # Log the database URL for debugging (without password)
