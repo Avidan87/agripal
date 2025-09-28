@@ -25,10 +25,16 @@ def main():
     
     # Create and launch interface
     app = create_agripal_interface(api_url)
+    # Railway expects the app to run on the PORT environment variable
+    port = int(os.getenv("PORT", 8080))
+    print(f"🚀 Starting on port: {port}")
+    
     app.launch(
         server_name="0.0.0.0",
-        server_port=int(os.getenv("PORT", 7860)),
-        inbrowser=False  # Don't open browser in production
+        server_port=port,
+        inbrowser=False,  # Don't open browser in production
+        share=False,      # Don't create public share link
+        show_error=True   # Show errors in production
     )
 if __name__ == "__main__":
     main()
