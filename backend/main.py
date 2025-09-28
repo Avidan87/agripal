@@ -75,6 +75,15 @@ async def startup_event():
     """Initialize services on startup"""
     logger.info("🚀 Starting AgriPal backend services with AI coordinator...")
     
+    # Validate Supabase configuration for production
+    if settings.ENVIRONMENT == "production":
+        from .config import validate_supabase_config
+        if not validate_supabase_config():
+            logger.error("❌ Supabase configuration missing for production deployment!")
+            logger.error("🔧 Please set SUPABASE_DATABASE_URL and SUPABASE_URL environment variables")
+        else:
+            logger.info("✅ Supabase configuration validated for production")
+    
     # Test database connection on startup
     try:
         from .database.connection import get_database_manager

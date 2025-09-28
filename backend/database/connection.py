@@ -25,8 +25,17 @@ class DatabaseManager:
     """Async database connection manager with connection pooling"""
     
     def __init__(self):
-        # Use Supabase database URL if available, otherwise fallback to local
-        self.database_url = settings.SUPABASE_DATABASE_URL or settings.DATABASE_URL
+        # Prioritize Supabase database URL for production, with better environment detection
+        if settings.ENVIRONMENT == "production" and settings.SUPABASE_DATABASE_URL:
+            self.database_url = settings.SUPABASE_DATABASE_URL
+            logger.info("🔗 Using Supabase database for production")
+        elif settings.SUPABASE_DATABASE_URL:
+            self.database_url = settings.SUPABASE_DATABASE_URL
+            logger.info("🔗 Using Supabase database (configured)")
+        else:
+            self.database_url = settings.DATABASE_URL
+            logger.warning("⚠️ Using local database - SUPABASE_DATABASE_URL not configured")
+        
         self.engine = None
         self.session_factory = None
         self._connection_pool = None

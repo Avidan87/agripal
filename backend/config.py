@@ -36,11 +36,11 @@ class Settings(BaseSettings):
     
     # Database Configuration
     DATABASE_URL: str = "postgresql+psycopg://postgres:postgres@localhost:5432/agripal"  # Local development
-    SUPABASE_DATABASE_URL: str = ""  # Supabase production database URL
+    SUPABASE_DATABASE_URL: str = ""  # Supabase production database URL - REQUIRED for Railway deployment
     DATABASE_ECHO: bool = False
     
-    # Supabase Configuration
-    SUPABASE_URL: str = ""  # Supabase project URL
+    # Supabase Configuration - REQUIRED for Railway deployment
+    SUPABASE_URL: str = ""  # Supabase project URL (e.g., https://tugmydzeuhupdfsfiatb.supabase.co)
     SUPABASE_ANON_KEY: str = ""  # Supabase anonymous key
     SUPABASE_SERVICE_ROLE_KEY: str = ""  # Supabase service role key
     
@@ -182,6 +182,12 @@ def validate_email_config() -> bool:
     """Validate email configuration"""
     return bool(settings.SENDGRID_API_KEY)
 
+def validate_supabase_config() -> bool:
+    """Validate Supabase configuration for production"""
+    if settings.ENVIRONMENT == "production":
+        return bool(settings.SUPABASE_DATABASE_URL and settings.SUPABASE_URL)
+    return True  # Not required for development
+
 # Export commonly used settings
 __all__ = [
     "settings",
@@ -191,7 +197,8 @@ __all__ = [
     "is_development",
     "validate_openai_config",
     "validate_storage_config",
-    "validate_email_config"
+    "validate_email_config",
+    "validate_supabase_config"
 ]
 
 
