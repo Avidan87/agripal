@@ -34,7 +34,7 @@ class DatabaseManager:
             if settings.ENVIRONMENT == "production":
                 # For Render PostgreSQL, SSL is required
                 # Ensure SSL is properly configured for Render
-                if "sslmode" not in self.database_url:
+                if "sslmode" not in self.database_url and "ssl" not in self.database_url:
                     if "?" in self.database_url:
                         self.database_url += "&sslmode=require"
                     else:
@@ -44,20 +44,33 @@ class DatabaseManager:
                 connect_args = {
                     "ssl": "require",  # Force SSL connection
                     "server_settings": {
-                        "jit": "off"
+                        "jit": "off",
+                        "application_name": "agripal_backend"
                     }
                 }
                 
                 # Additional SSL configuration for Render compatibility
                 if "render.com" in self.database_url or "onrender.com" in self.database_url:
-                    # Render-specific SSL configuration
+                    # Render-specific SSL configuration - Render requires SSL
                     connect_args.update({
-                        "ssl": "require",
+                        "ssl": "require",  # Render PostgreSQL requires SSL
                         "server_settings": {
                             "jit": "off",
                             "application_name": "agripal_backend"
                         }
                     })
+                    
+                    # Add SSL context for Render if needed
+                    try:
+                        import ssl
+                        ssl_context = ssl.create_default_context()
+                        ssl_context.check_hostname = False
+                        ssl_context.verify_mode = ssl.CERT_NONE
+                        connect_args["ssl"] = ssl_context
+                        logger.info("🔒 Using SSL context for Render PostgreSQL connection")
+                    except Exception as ssl_error:
+                        logger.warning(f"⚠️ SSL context creation failed: {ssl_error}, using ssl=require")
+                        connect_args["ssl"] = "require"
             
             # Log the database URL for debugging (without password)
             safe_url = self.database_url

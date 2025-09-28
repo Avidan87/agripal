@@ -213,27 +213,90 @@ class KnowledgeAgent:
                     # Convert SQLAlchemy URL to asyncpg format
                     asyncpg_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
                     
+                    # Add SSL parameter to URL for Render PostgreSQL
+                    if settings.ENVIRONMENT == "production" and ("render.com" in asyncpg_url or "onrender.com" in asyncpg_url):
+                        if "?" in asyncpg_url:
+                            asyncpg_url += "&ssl=true"
+                        else:
+                            asyncpg_url += "?ssl=true"
+                        logger.info("🔒 Added ssl=true parameter to database URL for Render")
+                    
+                    logger.info(f"🔗 Attempting PostgreSQL connection to: {asyncpg_url.split('@')[1] if '@' in asyncpg_url else 'hidden'}")
+                    
                     # Configure SSL for Render PostgreSQL
                     ssl_config = None
                     if settings.ENVIRONMENT == "production":
+                        # Render PostgreSQL requires SSL - use "require" not "prefer"
                         ssl_config = "require"  # Force SSL for Render
                         
                         # Additional SSL configuration for Render compatibility
                         if "render.com" in asyncpg_url or "onrender.com" in asyncpg_url:
-                            # Use more permissive SSL settings for Render
-                            ssl_config = "prefer"  # Try SSL first, fallback to non-SSL
+                            # Render PostgreSQL requires SSL - keep "require"
+                            ssl_config = "require"  # Render requires SSL, don't fallback
                     
-                    self.postgres_pool = await asyncpg.create_pool(
-                        asyncpg_url,
-                        min_size=2,
-                        max_size=10,
-                        command_timeout=60,
-                        ssl=ssl_config
-                    )
-                    logger.info("✅ PostgreSQL connection pool created")
+                    # Additional SSL configuration for Render PostgreSQL
+                    pool_kwargs = {
+                        "min_size": 2,
+                        "max_size": 10,
+                        "command_timeout": 60,
+                        "ssl": ssl_config
+                    }
+                    
+                    # Add SSL context for Render if needed
+                    if ssl_config == "require" and ("render.com" in asyncpg_url or "onrender.com" in asyncpg_url):
+                        # Try different SSL approaches for Render
+                        try:
+                            import ssl
+                            ssl_context = ssl.create_default_context()
+                            ssl_context.check_hostname = False
+                            ssl_context.verify_mode = ssl.CERT_NONE
+                            pool_kwargs["ssl"] = ssl_context
+                            logger.info("🔒 Using SSL context for Render PostgreSQL connection")
+                        except Exception as ssl_error:
+                            logger.warning(f"⚠️ SSL context creation failed: {ssl_error}, using ssl=require")
+                            pool_kwargs["ssl"] = "require"
+                    elif ssl_config == "require":
+                        logger.info("🔒 Using SSL=require for PostgreSQL connection")
+                    
+                    # Additional Render-specific SSL configuration
+                    if ("render.com" in asyncpg_url or "onrender.com" in asyncpg_url):
+                        # Ensure SSL is properly configured for Render
+                        pool_kwargs.update({
+                            "server_settings": {
+                                "application_name": "agripal_knowledge_agent"
+                            }
+                        })
+                    
+                    # Try connection with comprehensive SSL configuration
+                    try:
+                        self.postgres_pool = await asyncpg.create_pool(
+                            asyncpg_url,
+                            **pool_kwargs
+                        )
+                        logger.info("✅ PostgreSQL connection pool created")
+                    except Exception as ssl_error:
+                        # If SSL context fails, try with simple ssl=require
+                        if "ssl" in str(ssl_error).lower():
+                            logger.warning(f"⚠️ SSL context failed, trying simple ssl=require: {ssl_error}")
+                            pool_kwargs["ssl"] = "require"
+                            self.postgres_pool = await asyncpg.create_pool(
+                                asyncpg_url,
+                                **pool_kwargs
+                            )
+                            logger.info("✅ PostgreSQL connection pool created with ssl=require")
+                        else:
+                            raise ssl_error
                 except Exception as first_error:
                     # If that fails, try with the same credentials but different database name
                     fallback_url = settings.DATABASE_URL.replace("agripaldata", "agripal").replace("postgresql+asyncpg://", "postgresql://")
+                    
+                    # Add SSL parameter to fallback URL for Render PostgreSQL
+                    if settings.ENVIRONMENT == "production" and ("render.com" in fallback_url or "onrender.com" in fallback_url):
+                        if "?" in fallback_url:
+                            fallback_url += "&ssl=true"
+                        else:
+                            fallback_url += "?ssl=true"
+                    
                     logger.warning(f"⚠️ First PostgreSQL connection attempt failed: {str(first_error)}. Trying fallback...")
                     
                     try:
@@ -244,15 +307,31 @@ class KnowledgeAgent:
                             
                             # Additional SSL configuration for Render compatibility
                             if "render.com" in fallback_url or "onrender.com" in fallback_url:
-                                # Use more permissive SSL settings for Render
-                                ssl_config = "prefer"  # Try SSL first, fallback to non-SSL
+                                # Render PostgreSQL requires SSL - keep "require"
+                                ssl_config = "require"  # Render requires SSL, don't fallback
                             
+                        # Additional SSL configuration for fallback connection
+                        pool_kwargs = {
+                            "min_size": 2,
+                            "max_size": 10,
+                            "command_timeout": 60,
+                            "ssl": ssl_config
+                        }
+                        
+                        # Add SSL context for Render if needed
+                        if ssl_config == "require" and ("render.com" in fallback_url or "onrender.com" in fallback_url):
+                            import ssl
+                            ssl_context = ssl.create_default_context()
+                            ssl_context.check_hostname = False
+                            ssl_context.verify_mode = ssl.CERT_NONE
+                            pool_kwargs["ssl"] = ssl_context
+                            logger.info("🔒 Using SSL context for Render PostgreSQL fallback connection")
+                        elif ssl_config == "require":
+                            logger.info("🔒 Using SSL=require for PostgreSQL fallback connection")
+                        
                         self.postgres_pool = await asyncpg.create_pool(
                             fallback_url,
-                            min_size=2,
-                            max_size=10,
-                            command_timeout=60,
-                            ssl=ssl_config
+                            **pool_kwargs
                         )
                         logger.info("✅ PostgreSQL connection pool created with fallback database")
                     except Exception as fallback_error:
