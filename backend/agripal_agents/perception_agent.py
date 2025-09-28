@@ -744,9 +744,14 @@ class PerceptionAgent:
             
             # Parse response and extract structured data
             analysis_text = response.choices[0].message.content
+            logger.info(f"🔍 Raw OpenAI Vision response length: {len(analysis_text)} characters")
+            logger.debug(f"🔍 Raw OpenAI Vision response: {analysis_text[:500]}...")  # Log first 500 chars
+            
             structured_result = await self._parse_analysis_response(analysis_text, metadata)
             
             logger.info(f"✅ Image analysis completed with {structured_result.confidence_level:.2f} confidence")
+            logger.info(f"🔍 Detected issues: {structured_result.detected_issues}")
+            logger.info(f"🔍 Health score: {structured_result.crop_health_score}")
             return structured_result
             
         except Exception as e:
@@ -777,35 +782,28 @@ class PerceptionAgent:
         return f"""
         You are an expert agricultural consultant analyzing field images for crop health assessment.
         
-        {crop_context}Please provide a comprehensive analysis that will be used to create natural, 
-        engaging responses for farmers. Focus on practical insights and actionable guidance.
+        {crop_context}Analyze this image thoroughly and provide your response in the EXACT format below. 
+        Do not deviate from this format - it's critical for proper processing.
         
-        ANALYSIS AREAS:
-        1. Visual Observations: What do you see in this image?
-        2. Health Assessment: Overall crop health score (0-100)
-        3. Disease Detection: Any visible diseases, pests, or disorders
-        4. Nutrient Status: Signs of nutrient deficiencies or toxicities
-        5. Environmental Stress: Drought, heat, cold, or other stress indicators
-        6. Growth Stage: Estimated growth stage and development
-        7. Recommendations: Specific actionable advice
-        8. Urgency Level: How urgent is intervention (low/medium/high/critical)
+        REQUIRED RESPONSE FORMAT (copy exactly):
         
-        FORMAT FOR STRUCTURED DATA (for internal processing):
-        HEALTH_SCORE: [0-100]
-        CONFIDENCE: [0.0-1.0]
-        ISSUES: [comma-separated list]
-        SEVERITY: [low/medium/high/critical]
-        RECOMMENDATIONS: [numbered list]
-        OBSERVATIONS: [detailed description]
+        HEALTH_SCORE: [number from 0-100 based on what you observe]
+        CONFIDENCE: [your confidence level from 0.0 to 1.0]
+        ISSUES: [list specific problems you see, separated by commas]
+        SEVERITY: [one word: low, medium, high, or critical]
+        RECOMMENDATIONS: 
+        1. [specific actionable recommendation]
+        2. [another specific recommendation]
+        3. [third recommendation if needed]
+        OBSERVATIONS: [detailed description of what you see in the image]
         
-        ANALYSIS_TEXT: [Write a natural, conversational analysis that a farmer would find engaging and helpful. 
-        This should be written as if you're speaking directly to the farmer, providing strategic insights 
-        and practical guidance. Be encouraging and supportive, especially if there are challenges.
-        Use relevant emojis throughout (3-5 emojis) to make it more engaging: 🌾🌱🌿💧☀️🌧️🐛🔬📊✅❌⚠️💡🎯🚀🌿🌽🍅🥕🌶️🥬🌾🌻🌺🌸🌼🌷]
+        ANALYSIS_TEXT: [Write a natural, conversational analysis that directly addresses the farmer's question: "{query_context}". 
+        Be specific about what you observe in THIS image. Mention visible details like leaf color, plant structure, 
+        soil conditions, growth stage, any visible symptoms or issues. Use relevant emojis (3-5 total): 
+        🌾🌱🌿💧☀️🌧️🐛🔬📊✅❌⚠️💡🎯🚀🌽🍅🥕🌶️🥬🌻🌺🌸🌼🌷]
         
-        User Context: {query_context}
-        
-        Focus on providing strategic insights that help farmers make informed decisions about their crops.
+        CRITICAL: You MUST follow this exact format. Start with "HEALTH_SCORE:" and include all sections.
+        Be specific about what you actually see in the image, not general farming advice.
         """
     
     async def _image_to_base64(self, image: Any) -> str:
@@ -903,6 +901,7 @@ class PerceptionAgent:
         """
         try:
             lines = response_text.split('\n')
+            logger.info(f"🔍 Parsing vision response with {len(lines)} lines")
             
             # Initialize default values
             health_score = 75.0
@@ -912,6 +911,9 @@ class PerceptionAgent:
             recommendations = []
             observations = ""
             analysis_text = None
+            
+            # Log first few lines for debugging
+            logger.debug(f"🔍 First 5 lines of response: {lines[:5]}")
             
             # Parse structured response
             for line in lines:
@@ -958,16 +960,39 @@ class PerceptionAgent:
                 elif line.startswith('ANALYSIS_TEXT:'):
                     analysis_text = line.split(':', 1)[1].strip()
             
-            # If no specific issues detected, infer from health score
-            if not issues:
-                if health_score < 30:
-                    issues = ["Severe crop stress detected"]
-                elif health_score < 60:
-                    issues = ["Moderate crop health concerns"]
-                elif health_score < 80:
-                    issues = ["Minor crop health issues"]
+            # If no specific issues detected, try to extract from analysis text
+            if not issues and analysis_text:
+                # Try to extract issues from the analysis text
+                analysis_lower = analysis_text.lower()
+                potential_issues = []
+                
+                # Look for common agricultural issues in the text
+                if any(word in analysis_lower for word in ['disease', 'blight', 'fungal', 'bacterial', 'viral']):
+                    potential_issues.append("Disease symptoms detected")
+                if any(word in analysis_lower for word in ['pest', 'insect', 'bug', 'larvae', 'damage']):
+                    potential_issues.append("Pest damage visible")
+                if any(word in analysis_lower for word in ['nutrient', 'deficiency', 'nitrogen', 'phosphorus', 'yellow']):
+                    potential_issues.append("Nutrient deficiency signs")
+                if any(word in analysis_lower for word in ['drought', 'water', 'stress', 'wilting', 'dry']):
+                    potential_issues.append("Water stress indicators")
+                if any(word in analysis_lower for word in ['weed', 'competition', 'invasive']):
+                    potential_issues.append("Weed competition")
+                
+                if potential_issues:
+                    issues = potential_issues
                 else:
-                    issues = ["Crop appears healthy"]
+                    # Fallback based on health score
+                    if health_score < 30:
+                        issues = ["Severe crop stress detected"]
+                    elif health_score < 60:
+                        issues = ["Moderate crop health concerns"]
+                    elif health_score < 80:
+                        issues = ["Minor crop health issues"]
+                    else:
+                        issues = ["Crop appears healthy"]
+            elif not issues:
+                # Final fallback if no analysis text
+                issues = ["Unable to determine specific issues from image"]
             
             # Ensure we have recommendations
             if not recommendations:
