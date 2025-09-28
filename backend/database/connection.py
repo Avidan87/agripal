@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
-from ..config import settings
+from ..config import settings, get_database_url
 
 # Database connection management
 
@@ -19,13 +19,15 @@ class DatabaseManager:
     """Async database connection manager with connection pooling"""
     
     def __init__(self):
-        # Use DATABASE_URL (Railway will provide this automatically)
-        self.database_url = settings.DATABASE_URL
+        # Use get_database_url() to prioritize Railway database URL
+        self.database_url = get_database_url()
         
         # Log database source
         if settings.ENVIRONMENT == "production":
             if "railway.app" in self.database_url or "railway" in self.database_url:
                 logger.info("🔗 Using Railway database for production")
+            elif settings.RAILWAY_DATABASE_URL:
+                logger.info("🔗 Using Railway database URL for production")
             else:
                 logger.info("🔗 Using configured database for production")
         else:
@@ -47,6 +49,8 @@ class DatabaseManager:
                 logger.info("🔗 Connecting to Railway database")
             elif "localhost" in self.database_url:
                 logger.info("🔗 Connecting to local database")
+            elif settings.RAILWAY_DATABASE_URL and self.database_url == settings.RAILWAY_DATABASE_URL:
+                logger.info("🔗 Connecting to Railway database via RAILWAY_DATABASE_URL")
             else:
                 logger.info("🔗 Connecting to configured database")
             

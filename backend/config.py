@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     
     # Database Configuration
     DATABASE_URL: str = "postgresql+psycopg://postgres:postgres@localhost:5432/agripal"  # Local development
+    RAILWAY_DATABASE_URL: str = ""  # Railway PostgreSQL database URL
     DATABASE_ECHO: bool = False
     
     # Railway Configuration
@@ -143,6 +144,10 @@ settings = get_settings()
 # Environment-specific configurations
 def get_database_url() -> str:
     """Get database URL with proper formatting"""
+    # Priority: Railway database URL > regular DATABASE_URL
+    if settings.RAILWAY_DATABASE_URL:
+        return settings.RAILWAY_DATABASE_URL
+    
     if settings.ENVIRONMENT == "test":
         return settings.DATABASE_URL.replace("/agripal", "/agripal_test")
     return settings.DATABASE_URL
@@ -179,6 +184,10 @@ def validate_email_config() -> bool:
 def validate_database_config() -> bool:
     """Validate database configuration for production"""
     if settings.ENVIRONMENT == "production":
+        # Check if Railway database URL is available
+        if settings.RAILWAY_DATABASE_URL:
+            return bool(settings.RAILWAY_DATABASE_URL and "localhost" not in settings.RAILWAY_DATABASE_URL)
+        # Fallback to regular DATABASE_URL
         return bool(settings.DATABASE_URL and "localhost" not in settings.DATABASE_URL)
     return True  # Not required for development
 
