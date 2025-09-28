@@ -520,21 +520,12 @@ class PerceptionAgent:
         except Exception as e:
             logger.error(f"❌ Failed to parse agent response: {str(e)}")
             
-            # Generate dynamic expert recommendation for parse error
-            from backend.utils.expert_recommendations import expert_system
-            expert_rec = expert_system.get_expert_recommendation(
-                issue_type="image analysis",
-                crop_type=metadata.get('crop_type') if metadata else None,
-                location=metadata.get('location') if metadata else None,
-                confidence=0.3,
-                severity="medium"
-            )
-            
-            recommendations = ["Unable to complete detailed analysis due to technical issues"]
-            if expert_rec:
-                recommendations.append(expert_rec)
-            else:
-                recommendations.append("Please try uploading the image again or contact support")
+            # Provide helpful fallback recommendations for parse error
+            recommendations = [
+                "Unable to complete detailed analysis due to technical issues",
+                "For better image analysis, ensure good lighting and clear view of the crop",
+                "Try uploading a clearer image or describe what you're observing in your crop"
+            ]
             
             return ImageAnalysisResult(
                 detected_issues=["Unable to complete detailed analysis"],
@@ -1024,21 +1015,12 @@ class PerceptionAgent:
         except Exception as e:
             logger.error(f"❌ Failed to parse analysis response: {str(e)}")
             
-            # Generate dynamic expert recommendation for analysis error
-            from backend.utils.expert_recommendations import expert_system
-            expert_rec = expert_system.get_expert_recommendation(
-                issue_type="image analysis",
-                crop_type=metadata.get('crop_type') if metadata else None,
-                location=metadata.get('location') if metadata else None,
-                confidence=0.3,
-                severity="medium"
-            )
-            
-            recommendations = ["Unable to complete detailed analysis due to parsing issues"]
-            if expert_rec:
-                recommendations.append(expert_rec)
-            else:
-                recommendations.append("Please try uploading a clearer image or contact support")
+            # Provide helpful fallback recommendations for analysis error
+            recommendations = [
+                "Unable to complete detailed analysis due to parsing issues",
+                "Try uploading a clearer image with good lighting",
+                "Describe what you're seeing in your crop for alternative assistance"
+            ]
             
             # Return safe default result
             return ImageAnalysisResult(

@@ -759,20 +759,13 @@ Always provide:
                     
                     content += "You can try rephrasing your question with more specific details about your situation, or I can help with a different aspect of your farming needs."
                 
-                # Add dynamic expert recommendation if appropriate
-                try:
-                    from backend.utils.expert_recommendations import expert_system
-                    expert_rec = expert_system.get_expert_recommendation(
-                        issue_type=user_query,
-                        crop_type=crop_type,
-                        location=user_context.get('location') if user_context else None,
-                        confidence=0.2,  # Low confidence since no results found
-                        severity="medium"
-                    )
-                    if expert_rec:
-                        content += f"\n\n{expert_rec}"
-                except ImportError:
-                    logger.warning("⚠️ Expert recommendations module not available")
+                # Add contextual farming advice when no specific results found
+                content += "\n\nGeneral farming recommendations based on common practices:"
+                if crop_type:
+                    content += f"\n• For {crop_type} crops, ensure proper spacing and drainage"
+                    content += f"\n• Monitor {crop_type} for common pests and diseases in your region"
+                content += "\n• Regular soil testing helps identify nutrient needs"
+                content += "\n• Maintain consistent watering schedule based on crop requirements"
             
             # Append concise weather summary if available
             if weather_block:
@@ -1164,27 +1157,10 @@ Always provide:
         except Exception as e:
             logger.error(f"❌ Failed to parse knowledge agent response: {str(e)}")
             
-            # Generate dynamic expert recommendation for error case
-            try:
-                from backend.utils.expert_recommendations import expert_system
-                user_context = message.metadata if hasattr(message, 'metadata') else {}
-                expert_rec = expert_system.get_expert_recommendation(
-                    issue_type=original_query,
-                    crop_type=user_context.get('crop_type') if user_context else None,
-                    location=user_context.get('location') if user_context else None,
-                    confidence=0.1,  # Very low confidence due to error
-                    severity="medium"
-                )
-            except ImportError:
-                logger.warning("⚠️ Expert recommendations module not available")
-                expert_rec = None
-                user_context = {}
+            # Provide helpful fallback advice for error case
+            user_context = message.metadata if hasattr(message, 'metadata') else {}
             
-            fallback_advice = "I encountered a technical issue retrieving specific knowledge."
-            if expert_rec:
-                fallback_advice += f" {expert_rec}"
-            else:
-                fallback_advice += " Please try rephrasing your question or contact support."
+            fallback_advice = "I encountered a technical issue retrieving specific knowledge. Try rephrasing your question with more specific details about your crop, symptoms, or farming situation. I'm here to help with agricultural guidance!"
             
             return KnowledgeSearchResult(
                 relevant_documents=[],
