@@ -713,32 +713,35 @@ Always provide:
                 for i, doc in enumerate(documents[:3]):  # Show top 3 results
                     content += f"\n\n{i+1}. {doc.get('content', '')[:200]}..."
             else:
-                # No documents found, generate query-specific response
-                # Only use perception analysis if the query is actually about image analysis
-                is_image_related_query = any(keyword in user_query.lower() for keyword in [
-                    'image', 'photo', 'picture', 'visual', 'see', 'look', 'appears', 'shows', 'crop image', 'plant image'
-                ])
-                
-                if perception_results and is_image_related_query:
-                    # Use the rich analysis_text from perception agent as the primary response
+                # No documents found, but we have perception results - use them as primary response
+                if perception_results:
                     image_analysis = perception_results.get('image_analysis', {})
                     analysis_text = image_analysis.get('analysis_text', '')
                     
                     if analysis_text and analysis_text.strip():
                         # Use the perception agent's analysis as the main response
                         content = analysis_text.strip()
+                        logger.info("🔍 Using perception analysis as primary response")
                     else:
                         # Fallback to structured data if no analysis_text
                         issues = image_analysis.get('detected_issues', [])
                         health_score = image_analysis.get('crop_health_score', 'Unknown')
                         severity = image_analysis.get('severity', 'Unknown')
+                        recommendations = image_analysis.get('recommendations', [])
                         
                         content = f"Based on the visual analysis of your crop image, "
-                        if issues:
+                        if issues and issues != ["Unable to determine specific issues from image"]:
                             content += f"I can see signs of {', '.join(issues[:2])}. "
                         content += f"The overall health score appears to be {health_score} with {severity} severity. "
-                        content += "While I don't have specific matching documents in my knowledge base, "
-                        content += "I can provide general guidance based on the visual symptoms observed."
+                        
+                        if recommendations:
+                            content += "\n\nHere are my specific recommendations:\n"
+                            for i, rec in enumerate(recommendations[:3], 1):
+                                content += f"{i}. {rec}\n"
+                        else:
+                            content += "I recommend monitoring your crop closely and consulting with local agricultural experts for specific treatment options."
+                        
+                        logger.info("🔍 Using structured perception data as response")
                 else:
                     # Generate query-specific response for non-image queries
                     content = f"I searched for information about '{user_query}' but didn't find specific results in my knowledge base. "

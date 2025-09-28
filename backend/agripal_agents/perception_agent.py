@@ -793,8 +793,13 @@ class PerceptionAgent:
         soil conditions, growth stage, any visible symptoms or issues. Use relevant emojis (3-5 total): 
         🌾🌱🌿💧☀️🌧️🐛🔬📊✅❌⚠️💡🎯🚀🌽🍅🥕🌶️🥬🌻🌺🌸🌼🌷]
         
-        CRITICAL: You MUST follow this exact format. Start with "HEALTH_SCORE:" and include all sections.
-        Be specific about what you actually see in the image, not general farming advice.
+        CRITICAL INSTRUCTIONS:
+        1. You MUST follow this exact format. Start with "HEALTH_SCORE:" and include all sections.
+        2. Be specific about what you actually see in the image, not general farming advice.
+        3. If you cannot clearly identify specific issues, list "General crop health assessment needed" in ISSUES.
+        4. Always provide at least 2-3 specific recommendations based on what you observe.
+        5. Be honest about your confidence level - if the image is unclear, use a lower confidence score.
+        6. Focus on visible symptoms, leaf conditions, plant structure, and any obvious problems.
         """
     
     async def _image_to_base64(self, image: Any) -> str:
@@ -905,14 +910,17 @@ class PerceptionAgent:
             
             # Log first few lines for debugging
             logger.debug(f"🔍 First 5 lines of response: {lines[:5]}")
+            logger.info(f"🔍 Full response text: {response_text[:500]}...")
             
             # Parse structured response
+            in_recommendations = False
             for line in lines:
                 line = line.strip()
                 if line.startswith('HEALTH_SCORE:'):
                     try:
                         health_score = float(line.split(':', 1)[1].strip())
                         health_score = max(0.0, min(100.0, health_score))
+                        logger.info(f"🔍 Parsed health score: {health_score}")
                     except (ValueError, IndexError):
                         pass
                         
@@ -920,26 +928,30 @@ class PerceptionAgent:
                     try:
                         confidence = float(line.split(':', 1)[1].strip())
                         confidence = max(0.0, min(1.0, confidence))
+                        logger.info(f"🔍 Parsed confidence: {confidence}")
                     except (ValueError, IndexError):
                         pass
                         
                 elif line.startswith('ISSUES:'):
                     issues_str = line.split(':', 1)[1].strip()
                     issues = [issue.strip() for issue in issues_str.split(',') if issue.strip()]
+                    logger.info(f"🔍 Parsed issues: {issues}")
                     
                 elif line.startswith('SEVERITY:'):
                     severity_str = line.split(':', 1)[1].strip().lower()
                     try:
                         severity = SeverityLevel(severity_str)
+                        logger.info(f"🔍 Parsed severity: {severity}")
                     except ValueError:
                         severity = SeverityLevel.MEDIUM
                         
                 elif line.startswith('RECOMMENDATIONS:'):
                     # Start collecting recommendations
+                    in_recommendations = True
                     recommendations = []
                     continue
                     
-                elif line.startswith(('1.', '2.', '3.', '4.', '5.', '-', '•')):
+                elif in_recommendations and line.startswith(('1.', '2.', '3.', '4.', '5.', '-', '•')):
                     # This is a recommendation item
                     rec_text = line.lstrip('123456789.-• ').strip()
                     if rec_text:
@@ -947,9 +959,11 @@ class PerceptionAgent:
                         
                 elif line.startswith('OBSERVATIONS:'):
                     observations = line.split(':', 1)[1].strip()
+                    logger.info(f"🔍 Parsed observations: {observations}")
                     
                 elif line.startswith('ANALYSIS_TEXT:'):
                     analysis_text = line.split(':', 1)[1].strip()
+                    logger.info(f"🔍 Parsed analysis text: {analysis_text[:100]}...")
             
             # If no specific issues detected, try to extract from analysis text
             if not issues and analysis_text:
@@ -971,6 +985,7 @@ class PerceptionAgent:
                 
                 if potential_issues:
                     issues = potential_issues
+                    logger.info(f"🔍 Extracted issues from analysis text: {issues}")
                 else:
                     # Fallback based on health score
                     if health_score < 30:
@@ -981,9 +996,31 @@ class PerceptionAgent:
                         issues = ["Minor crop health issues"]
                     else:
                         issues = ["Crop appears healthy"]
+                    logger.info(f"🔍 Using health score fallback: {issues}")
             elif not issues:
-                # Final fallback if no analysis text
-                issues = ["Unable to determine specific issues from image"]
+                # Try to extract from the full response text if no structured analysis
+                response_lower = response_text.lower()
+                potential_issues = []
+                
+                # Look for issues in the full response
+                if any(word in response_lower for word in ['disease', 'blight', 'fungal', 'bacterial', 'viral']):
+                    potential_issues.append("Disease symptoms detected")
+                if any(word in response_lower for word in ['pest', 'insect', 'bug', 'larvae', 'damage']):
+                    potential_issues.append("Pest damage visible")
+                if any(word in response_lower for word in ['nutrient', 'deficiency', 'nitrogen', 'phosphorus', 'yellow']):
+                    potential_issues.append("Nutrient deficiency signs")
+                if any(word in response_lower for word in ['drought', 'water', 'stress', 'wilting', 'dry']):
+                    potential_issues.append("Water stress indicators")
+                if any(word in response_lower for word in ['weed', 'competition', 'invasive']):
+                    potential_issues.append("Weed competition")
+                
+                if potential_issues:
+                    issues = potential_issues
+                    logger.info(f"🔍 Extracted issues from full response: {issues}")
+                else:
+                    # Final fallback if no analysis text
+                    issues = ["Unable to determine specific issues from image"]
+                    logger.warning("⚠️ No issues could be extracted from response")
             
             # Ensure we have recommendations
             if not recommendations:
