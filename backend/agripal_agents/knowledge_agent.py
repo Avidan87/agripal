@@ -713,8 +713,7 @@ Always provide:
                 for i, doc in enumerate(documents[:3]):  # Show top 3 results
                     content += f"\n\n{i+1}. {doc.get('content', '')[:200]}..."
             else:
-                # No documents found, but we have perception results - use them as primary response
-                # Only use perception results if the query is related to image analysis
+                # No documents found - check if we should use perception results
                 query_lower = user_query.lower()
                 image_related_keywords = ["image", "photo", "picture", "see", "show", "look", "visual", "appears", "looks like", "what is wrong", "diagnose", "identify"]
                 is_image_related_query = any(keyword in query_lower for keyword in image_related_keywords)
@@ -747,29 +746,10 @@ Always provide:
                             content += "I recommend monitoring your crop closely and consulting with local agricultural experts for specific treatment options."
                         
                         logger.info("🔍 Using structured perception data as response")
-                elif perception_results and not is_image_related_query:
-                    # Perception results available but query is not image-related - ignore perception results
-                    logger.info("🔍 Perception results available but query is not image-related, ignoring perception results")
-                    # Generate query-specific response for non-image queries
-                    content = f"I searched for information about '{user_query}' but didn't find specific results in my knowledge base. "
-                    
-                    # Add more helpful guidance based on the query type
-                    if any(keyword in user_query.lower() for keyword in ['disease', 'pest', 'problem', 'issue', 'sick', 'unhealthy']):
-                        content += "For plant health issues, I'd recommend checking for common symptoms like discoloration, spots, wilting, or unusual growth patterns. "
-                        content += "Consider factors like watering, soil conditions, and environmental stress. "
-                    elif any(keyword in user_query.lower() for keyword in ['fertilizer', 'nutrient', 'feeding', 'soil']):
-                        content += "For soil and nutrient questions, consider factors like pH levels, soil type, and specific nutrient deficiencies. "
-                        content += "A soil test can provide valuable insights into what your plants need. "
-                    elif any(keyword in user_query.lower() for keyword in ['watering', 'water', 'irrigation']):
-                        content += "For watering questions, consider factors like soil type, plant species, weather conditions, and drainage. "
-                        content += "Most plants prefer deep, infrequent watering over frequent shallow watering. "
-                    elif any(keyword in user_query.lower() for keyword in ['planting', 'growing', 'cultivation', 'care']):
-                        content += "For growing questions, consider factors like timing, spacing, soil preparation, and ongoing care requirements. "
-                        content += "Each plant has specific needs for optimal growth. "
-                    
-                    content += "You can try rephrasing your question with more specific details about your situation, or I can help with a different aspect of your farming needs."
                 else:
+                    # No documents found and either no perception results or query is not image-related
                     # Generate query-specific response for non-image queries
+                    logger.info("🔍 No documents found, generating query-specific response")
                     content = f"I searched for information about '{user_query}' but didn't find specific results in my knowledge base. "
                     
                     # Add more helpful guidance based on the query type
