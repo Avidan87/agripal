@@ -226,7 +226,11 @@ class AgentAuthMiddleware(BaseHTTPMiddleware):
         
         # Initialize components
         self.jwt_auth = JWTAuthenticator(settings.JWT_SECRET_KEY)
-        self.rate_limiter = RateLimiter(getattr(settings, 'REDIS_URL', None))
+        # Only use Redis if it's available and not localhost in production
+        redis_url = getattr(settings, 'REDIS_URL', None)
+        if settings.ENVIRONMENT == "production" and redis_url and "localhost" in redis_url:
+            redis_url = None  # Disable Redis in production if pointing to localhost
+        self.rate_limiter = RateLimiter(redis_url)
         
         # Rate limiting rules (requests per time window)
         self.rate_limits = {

@@ -23,7 +23,7 @@ from ..models import (
     AgentType, 
     KnowledgeSearchResult
 )
-from ..config import settings
+from ..config import settings, get_database_url
 
 logger = logging.getLogger(__name__)
 
@@ -210,16 +210,17 @@ class KnowledgeAgent:
             if self.dependencies_available and 'asyncpg' in self.dependencies:
                 asyncpg = self.dependencies['asyncpg']
                 try:
-                    # Convert SQLAlchemy URL to asyncpg format
-                    asyncpg_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+                    # Convert SQLAlchemy URL to asyncpg format - use get_database_url() for Railway support
+                    database_url = get_database_url()
+                    asyncpg_url = database_url.replace("postgresql+asyncpg://", "postgresql://").replace("postgresql+psycopg://", "postgresql://")
                     
-                    # Add SSL parameter to URL for Render PostgreSQL
-                    if settings.ENVIRONMENT == "production" and ("render.com" in asyncpg_url or "onrender.com" in asyncpg_url):
+                    # Add SSL parameter to URL for Railway/Render PostgreSQL
+                    if settings.ENVIRONMENT == "production" and ("railway" in asyncpg_url or "render.com" in asyncpg_url or "onrender.com" in asyncpg_url):
                         if "?" in asyncpg_url:
                             asyncpg_url += "&sslmode=require"
                         else:
                             asyncpg_url += "?sslmode=require"
-                        logger.info("🔒 Added sslmode=require parameter to database URL for Render")
+                        logger.info("🔒 Using SSL=require for PostgreSQL connection")
                     
                     logger.info(f"🔗 Attempting PostgreSQL connection to: {asyncpg_url.split('@')[1] if '@' in asyncpg_url else 'hidden'}")
                     
@@ -296,10 +297,10 @@ class KnowledgeAgent:
                             raise ssl_error
                 except Exception as first_error:
                     # If that fails, try with the same credentials but different database name
-                    fallback_url = settings.DATABASE_URL.replace("agripaldata", "agripal").replace("postgresql+asyncpg://", "postgresql://")
+                    fallback_url = get_database_url().replace("agripaldata", "agripal").replace("postgresql+asyncpg://", "postgresql://").replace("postgresql+psycopg://", "postgresql://")
                     
-                    # Add SSL parameter to fallback URL for Render PostgreSQL
-                    if settings.ENVIRONMENT == "production" and ("render.com" in fallback_url or "onrender.com" in fallback_url):
+                    # Add SSL parameter to fallback URL for Railway/Render PostgreSQL
+                    if settings.ENVIRONMENT == "production" and ("railway" in fallback_url or "render.com" in fallback_url or "onrender.com" in fallback_url):
                         if "?" in fallback_url:
                             fallback_url += "&sslmode=require"
                         else:
@@ -1164,14 +1165,20 @@ Always provide:
             logger.error(f"❌ Failed to parse knowledge agent response: {str(e)}")
             
             # Generate dynamic expert recommendation for error case
-            from backend.utils.expert_recommendations import expert_system
-            expert_rec = expert_system.get_expert_recommendation(
-                issue_type=original_query,
-                crop_type=user_context.get('crop_type') if user_context else None,
-                location=user_context.get('location') if user_context else None,
-                confidence=0.1,  # Very low confidence due to error
-                severity="medium"
-            )
+            try:
+                from backend.utils.expert_recommendations import expert_system
+                user_context = message.metadata if hasattr(message, 'metadata') else {}
+                expert_rec = expert_system.get_expert_recommendation(
+                    issue_type=original_query,
+                    crop_type=user_context.get('crop_type') if user_context else None,
+                    location=user_context.get('location') if user_context else None,
+                    confidence=0.1,  # Very low confidence due to error
+                    severity="medium"
+                )
+            except ImportError:
+                logger.warning("⚠️ Expert recommendations module not available")
+                expert_rec = None
+                user_context = {}
             
             fallback_advice = "I encountered a technical issue retrieving specific knowledge."
             if expert_rec:

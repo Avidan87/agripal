@@ -27,11 +27,11 @@ huggingface_hub
 datasets
 
 # LangChain for advanced knowledge processing
-langchain
-langchain-openai
-langchain-community
-langchain-chroma
-langchain-text-splitters
+langchain>=0.2.0
+langchain-openai>=0.1.0
+langchain-community>=0.2.0
+langchain-chroma>=0.1.0
+langchain-text-splitters>=0.2.0
 
 # ChromaDB for vector search
 chromadb
@@ -41,7 +41,7 @@ sendgrid
 jinja2
 
 # Image processing
-opencv-python
+opencv-python-headless
 pillow
 numpy
 
@@ -58,6 +58,9 @@ packaging
 # Frontend UI dependencies
 gradio>=4.0.0
 python-multipart>=0.0.5
+
+# System dependencies for cloud deployment
+gunicorn>=20.0.0
 
 # Optional: for development and testing
 aiohttp
