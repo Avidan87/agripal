@@ -6,6 +6,8 @@ uvicorn
 asyncpg
 sqlalchemy[asyncio]
 psycopg[binary]>=3.0.0
+# Supabase client for additional features
+supabase>=2.0.0
 # Security and authentication
 python-jose
 passlib[bcrypt]

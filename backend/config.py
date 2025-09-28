@@ -22,18 +22,32 @@ class Settings(BaseSettings):
     # Auto-detect production environment
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # Auto-detect if running on Render
-        if os.getenv("RENDER") or "render.com" in os.getenv("HOST", ""):
+        # Auto-detect if running on Railway or Render
+        if (os.getenv("RAILWAY_ENVIRONMENT") or 
+            os.getenv("RENDER") or 
+            "railway.app" in os.getenv("HOST", "") or 
+            "render.com" in os.getenv("HOST", "")):
             self.ENVIRONMENT = "production"
     
     # Security
     SECRET_KEY: str = "your-secret-key-change-in-production"
     ALLOWED_ORIGINS: str = "*"  # Changed to string for environment variable compatibility
-    TRUSTED_HOSTS: str = "*.onrender.com,*.render.com,localhost,127.0.0.1"  # Fixed for Render deployment
+    TRUSTED_HOSTS: str = "*.railway.app,*.onrender.com,*.render.com,localhost,127.0.0.1"  # Railway + Render deployment
     
     # Database Configuration
-    DATABASE_URL: str = "postgresql+psycopg://postgres:postgres@localhost:5432/agripal"
+    DATABASE_URL: str = "postgresql+psycopg://postgres:postgres@localhost:5432/agripal"  # Local development
+    SUPABASE_DATABASE_URL: str = ""  # Supabase production database URL
     DATABASE_ECHO: bool = False
+    
+    # Supabase Configuration
+    SUPABASE_URL: str = ""  # Supabase project URL
+    SUPABASE_ANON_KEY: str = ""  # Supabase anonymous key
+    SUPABASE_SERVICE_ROLE_KEY: str = ""  # Supabase service role key
+    
+    # Railway Configuration
+    RAILWAY_ENVIRONMENT: str = ""
+    RAILWAY_TOKEN: str = ""
+    RAILWAY_PROJECT_ID: str = ""
     
     # Redis Configuration
     REDIS_URL: str = "redis://localhost:6379"

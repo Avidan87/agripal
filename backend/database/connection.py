@@ -11,50 +11,66 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 
 from ..config import settings
 
+# Optional Supabase client import
+try:
+    from supabase import create_client, Client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
+    Client = None
+
 logger = logging.getLogger(__name__)
 
 class DatabaseManager:
     """Async database connection manager with connection pooling"""
     
     def __init__(self):
-        self.database_url = settings.DATABASE_URL
+        # Use Supabase database URL if available, otherwise fallback to local
+        self.database_url = settings.SUPABASE_DATABASE_URL or settings.DATABASE_URL
         self.engine = None
         self.session_factory = None
         self._connection_pool = None
         self._is_initialized = False
         self._initialization_failed = False
+        self._supabase_client = None
     
     async def initialize(self):
         """Initialize database connection and session factory"""
         try:
             logger.info("🔄 Initializing database connection...")
             
-            # Handle SSL configuration for production environments like Render
+            # Log which database we're connecting to
+            if "supabase.co" in self.database_url:
+                logger.info("🔗 Connecting to Supabase database")
+            else:
+                logger.info("🔗 Connecting to local database")
+            
+            # Handle SSL configuration for production environments (Railway + Supabase)
             connect_args = {}
             if settings.ENVIRONMENT == "production":
-                # For Render PostgreSQL, SSL is required
-                # Ensure SSL is properly configured for Render
+                # For Supabase PostgreSQL, SSL is required
+                # Ensure SSL is properly configured for Supabase
                 if "sslmode" not in self.database_url and "ssl" not in self.database_url:
                     if "?" in self.database_url:
                         self.database_url += "&sslmode=require"
                     else:
                         self.database_url += "?sslmode=require"
                 
-                # Configure SSL settings for psycopg - Render requires SSL
+                # Configure SSL settings for psycopg - Supabase requires SSL
                 connect_args = {
-                    "sslmode": "require",  # Force SSL connection for Render
+                    "sslmode": "require",  # Force SSL connection for Supabase
                     "server_settings": {
                         "jit": "off",
                         "application_name": "agripal_backend"
                     }
                 }
                 
-                # Render-specific SSL configuration
-                if "render.com" in self.database_url or "onrender.com" in self.database_url:
-                    logger.info("🔒 Configuring SSL for Render PostgreSQL connection")
-                    # Use simple SSL configuration that works with Render
+                # Supabase-specific SSL configuration
+                if "supabase.co" in self.database_url:
+                    logger.info("🔒 Configuring SSL for Supabase PostgreSQL connection")
+                    # Use SSL configuration optimized for Supabase
                     connect_args = {
-                        "sslmode": "require",  # Render PostgreSQL requires SSL
+                        "sslmode": "require",  # Supabase PostgreSQL requires SSL
                         "server_settings": {
                             "jit": "off",
                             "application_name": "agripal_backend"
@@ -84,14 +100,14 @@ class DatabaseManager:
                     # Replace asyncpg with psycopg for better compatibility
                     self.database_url = self.database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
             
-            # Create async engine with connection pooling optimized for Render free plan
+            # Create async engine with connection pooling optimized for Supabase
             self.engine = create_async_engine(
                 self.database_url,
                 echo=settings.DATABASE_ECHO,
                 pool_pre_ping=True,  # Verify connections before use
-                pool_recycle=300,    # Recycle connections every 5 minutes (Render free plan timeout)
-                pool_size=1,        # Minimal pool size for free tier
-                max_overflow=0,     # No overflow connections for free tier
+                pool_recycle=300,    # Recycle connections every 5 minutes
+                pool_size=5,        # Supabase allows more connections
+                max_overflow=10,     # Overflow connections for better performance
                 pool_timeout=30,    # Connection timeout
                 connect_args=connect_args
             )
@@ -236,6 +252,25 @@ class DatabaseManager:
     def is_available(self) -> bool:
         """Check if database is available and initialized"""
         return self._is_initialized and not self._initialization_failed
+    
+    def get_supabase_client(self) -> Optional[Client]:
+        """Get Supabase client for additional features"""
+        if not SUPABASE_AVAILABLE:
+            logger.warning("⚠️ Supabase client not available - install with: pip install supabase")
+            return None
+        
+        if not self._supabase_client and settings.SUPABASE_URL and settings.SUPABASE_ANON_KEY:
+            try:
+                self._supabase_client = create_client(
+                    settings.SUPABASE_URL,
+                    settings.SUPABASE_ANON_KEY
+                )
+                logger.info("✅ Supabase client initialized")
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize Supabase client: {str(e)}")
+                return None
+        
+        return self._supabase_client
     
     async def close(self):
         """Close database connections"""
