@@ -757,8 +757,15 @@ Always provide:
                     logger.info("🔍 No documents found, using general agricultural knowledge")
                     content = await self._generate_general_agricultural_response(user_query, crop_type, user_context)
                 
-                # Only add generic advice if the response is very short (likely a fallback)
-                if len(content) < 200:
+                # Only add generic advice if the response is very short (likely a fallback) 
+                # AND we don't have substantial perception results (avoid duplication with image analysis)
+                has_perception_results = (
+                    perception_results and 
+                    isinstance(perception_results, dict) and
+                    (perception_results.get("image_analysis") or perception_results.get("analysis"))
+                )
+                
+                if len(content) < 200 and not has_perception_results:
                     content += "\n\nAdditional farming tips:"
                     if crop_type:
                         content += f"\n• For {crop_type} crops, ensure proper spacing and drainage"
@@ -766,8 +773,15 @@ Always provide:
                     content += "\n• Regular soil testing helps identify nutrient needs"
                     content += "\n• Maintain consistent watering schedule based on crop requirements"
             
-            # Append concise weather summary if available
-            if weather_block:
+            # Append concise weather summary if available and relevant
+            # Skip weather info for image-based queries that already have specific diagnosis
+            should_add_weather = (
+                weather_block and 
+                not has_perception_results and  # Don't add weather if we have image analysis
+                len(content) < 500  # Only add for shorter responses
+            )
+            
+            if should_add_weather:
                 combined_recs = weather_block.get("combined_recommendations") or weather_block.get("weather_recommendations") or []
                 if combined_recs:
                     content += "\n\nConsidering the weather for your location:"
