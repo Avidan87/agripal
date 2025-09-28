@@ -1045,8 +1045,16 @@ class AgentCoordinator:
                 if clear_flag:
                     session_cache_entry.pop("last_perception", None)
                 if perception_context_to_pass is None:
-                    # Default behavior: reuse if available unless explicitly disabled
-                    should_reuse = True if reuse_flag is None else bool(reuse_flag)
+                    # Only reuse perception results if the current query is related to image analysis
+                    # or if explicitly requested
+                    should_reuse = False  # Default to not reusing
+                    if reuse_flag is True:  # Only if explicitly requested
+                        should_reuse = True
+                    elif reuse_flag is None:  # Auto-detect if query is image-related
+                        query_lower = user_input.get("query", "").lower()
+                        image_related_keywords = ["image", "photo", "picture", "see", "show", "look", "visual", "appears", "looks like"]
+                        should_reuse = any(keyword in query_lower for keyword in image_related_keywords)
+                    
                     if should_reuse:
                         perception_context_to_pass = session_cache_entry.get("last_perception")
 
@@ -1081,8 +1089,16 @@ class AgentCoordinator:
                 if clear_flag:
                     session_cache_entry.pop("last_perception", None)
                 if perception_context_to_pass is None:
-                    # Default behavior: reuse if available unless explicitly disabled
-                    should_reuse = True if reuse_flag is None else bool(reuse_flag)
+                    # Only reuse perception results if the current query is related to image analysis
+                    # or if explicitly requested
+                    should_reuse = False  # Default to not reusing
+                    if reuse_flag is True:  # Only if explicitly requested
+                        should_reuse = True
+                    elif reuse_flag is None:  # Auto-detect if query is image-related
+                        query_lower = user_input.get("query", "").lower()
+                        image_related_keywords = ["image", "photo", "picture", "see", "show", "look", "visual", "appears", "looks like"]
+                        should_reuse = any(keyword in query_lower for keyword in image_related_keywords)
+                    
                     if should_reuse:
                         perception_context_to_pass = session_cache_entry.get("last_perception")
 
