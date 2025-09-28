@@ -2,12 +2,13 @@
 🗄️ AgriPal Database Connection Management
 Async database connection pooling and management for PostgreSQL.
 """
+import asyncio
 import logging
 from typing import Optional, AsyncGenerator
 from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import QueuePool
 
 from ..config import settings
 
@@ -75,13 +76,12 @@ class DatabaseManager:
                             safe_url = f"{protocol}://{user}:***@{host_db}"
             logger.info(f"🔗 Database URL: {safe_url}")
             
-            # Create async engine with connection pooling
+            # Create async engine with connection pooling optimized for Render free plan
             self.engine = create_async_engine(
                 self.database_url,
                 echo=settings.DATABASE_ECHO,
-                poolclass=NullPool,  # Use asyncpg's connection pooling
                 pool_pre_ping=True,  # Verify connections before use
-                pool_recycle=3600,   # Recycle connections every hour
+                pool_recycle=300,    # Recycle connections every 5 minutes (Render free plan timeout)
                 connect_args=connect_args
             )
             
@@ -109,15 +109,25 @@ class DatabaseManager:
             logger.warning("⚠️ Database initialization failed, will use fallback storage")
     
     async def _test_connection(self):
-        """Test database connection"""
-        try:
-            async with self.engine.begin() as conn:
-                from sqlalchemy import text
-                await conn.execute(text("SELECT 1"))
-            logger.info("✅ Database connection test passed")
-        except Exception as e:
-            logger.error(f"❌ Database connection test failed: {str(e)}")
-            raise
+        """Test database connection with retry logic for Render free plan"""
+        max_retries = 3
+        retry_delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                async with self.engine.begin() as conn:
+                    from sqlalchemy import text
+                    await conn.execute(text("SELECT 1"))
+                logger.info("✅ Database connection test passed")
+                return
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"⚠️ Database connection test failed (attempt {attempt + 1}/{max_retries}): {str(e)}. Retrying in {retry_delay}s...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logger.error(f"❌ Database connection test failed after {max_retries} attempts: {str(e)}")
+                    raise
     
     async def _ensure_tables_exist(self):
         """Ensure database tables exist (create if missing)"""

@@ -234,11 +234,19 @@ class KnowledgeAgent:
                             # Render PostgreSQL requires SSL - keep "require"
                             ssl_config = "require"  # Render requires SSL, don't fallback
                     
-                    # Additional SSL configuration for Render PostgreSQL
+                    # Additional SSL configuration for Render PostgreSQL - optimized for free plan
                     pool_kwargs = {
-                        "min_size": 2,
-                        "max_size": 10,
-                        "command_timeout": 60,
+                        "min_size": 1,  # Reduced for free plan
+                        "max_size": 3,  # Reduced for free plan
+                        "max_inactive_connection_lifetime": 300,  # 5 minutes - Render free plan timeout
+                        "command_timeout": 30,  # Command timeout
+                        "server_settings": {
+                            "jit": "off",
+                            "application_name": "agripal_knowledge_agent",
+                            "tcp_keepalives_idle": "300",  # Keep connections alive
+                            "tcp_keepalives_interval": "30",
+                            "tcp_keepalives_count": "3"
+                        },
                         "ssl": ssl_config
                     }
                     
@@ -310,11 +318,19 @@ class KnowledgeAgent:
                                 # Render PostgreSQL requires SSL - keep "require"
                                 ssl_config = "require"  # Render requires SSL, don't fallback
                             
-                        # Additional SSL configuration for fallback connection
+                        # Additional SSL configuration for fallback connection - optimized for free plan
                         pool_kwargs = {
-                            "min_size": 2,
-                            "max_size": 10,
-                            "command_timeout": 60,
+                            "min_size": 1,  # Reduced for free plan
+                            "max_size": 3,  # Reduced for free plan
+                            "max_inactive_connection_lifetime": 300,  # 5 minutes - Render free plan timeout
+                            "command_timeout": 30,  # Command timeout
+                            "server_settings": {
+                                "jit": "off",
+                                "application_name": "agripal_knowledge_agent_fallback",
+                                "tcp_keepalives_idle": "300",  # Keep connections alive
+                                "tcp_keepalives_interval": "30",
+                                "tcp_keepalives_count": "3"
+                            },
                             "ssl": ssl_config
                         }
                         
