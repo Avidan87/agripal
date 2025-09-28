@@ -11,13 +11,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 
 from ..config import settings
 
-# Optional Supabase client import
-try:
-    from supabase import create_client, Client
-    SUPABASE_AVAILABLE = True
-except ImportError:
-    SUPABASE_AVAILABLE = False
-    Client = None
+# Database connection management
 
 logger = logging.getLogger(__name__)
 
@@ -25,23 +19,23 @@ class DatabaseManager:
     """Async database connection manager with connection pooling"""
     
     def __init__(self):
-        # Prioritize Supabase database URL for production, with better environment detection
-        if settings.ENVIRONMENT == "production" and settings.SUPABASE_DATABASE_URL:
-            self.database_url = settings.SUPABASE_DATABASE_URL
-            logger.info("🔗 Using Supabase database for production")
-        elif settings.SUPABASE_DATABASE_URL:
-            self.database_url = settings.SUPABASE_DATABASE_URL
-            logger.info("🔗 Using Supabase database (configured)")
+        # Use DATABASE_URL (Railway will provide this automatically)
+        self.database_url = settings.DATABASE_URL
+        
+        # Log database source
+        if settings.ENVIRONMENT == "production":
+            if "railway.app" in self.database_url or "railway" in self.database_url:
+                logger.info("🔗 Using Railway database for production")
+            else:
+                logger.info("🔗 Using configured database for production")
         else:
-            self.database_url = settings.DATABASE_URL
-            logger.warning("⚠️ Using local database - SUPABASE_DATABASE_URL not configured")
+            logger.info("🔗 Using local database for development")
         
         self.engine = None
         self.session_factory = None
         self._connection_pool = None
         self._is_initialized = False
         self._initialization_failed = False
-        self._supabase_client = None
     
     async def initialize(self):
         """Initialize database connection and session factory"""
@@ -49,36 +43,31 @@ class DatabaseManager:
             logger.info("🔄 Initializing database connection...")
             
             # Log which database we're connecting to
-            if "supabase.co" in self.database_url:
-                logger.info("🔗 Connecting to Supabase database")
-            else:
+            if "railway" in self.database_url:
+                logger.info("🔗 Connecting to Railway database")
+            elif "localhost" in self.database_url:
                 logger.info("🔗 Connecting to local database")
+            else:
+                logger.info("🔗 Connecting to configured database")
             
-            # Handle SSL configuration for production environments (Railway + Supabase)
+            # Handle SSL configuration for production environments
             connect_args = {}
             if settings.ENVIRONMENT == "production":
-                # For Supabase PostgreSQL, SSL is required
-                # Ensure SSL is properly configured for Supabase
+                # For production databases, SSL is recommended
                 if "sslmode" not in self.database_url and "ssl" not in self.database_url:
                     if "?" in self.database_url:
                         self.database_url += "&sslmode=require"
                     else:
                         self.database_url += "?sslmode=require"
                 
-                # Configure SSL settings for psycopg - Supabase requires SSL
+                # Configure SSL settings for production
                 connect_args = {
-                    "sslmode": "require"  # Force SSL connection for Supabase
+                    "sslmode": "require",  # Force SSL connection for production
+                    "connect_timeout": "10",  # Connection timeout
+                    "application_name": "agripal_backend"  # Application name for monitoring
                 }
                 
-                # Supabase-specific SSL configuration
-                if "supabase.co" in self.database_url:
-                    logger.info("🔒 Configuring SSL for Supabase PostgreSQL connection")
-                    # Use SSL configuration optimized for Supabase
-                    connect_args = {
-                        "sslmode": "require",  # Supabase PostgreSQL requires SSL
-                        "connect_timeout": "10",  # Connection timeout
-                        "application_name": "agripal_backend"  # Application name for monitoring
-                    }
+                logger.info("🔒 Configuring SSL for production database connection")
             
             # Log the database URL for debugging (without password)
             safe_url = self.database_url
@@ -95,28 +84,22 @@ class DatabaseManager:
             logger.info(f"🔗 Database URL: {safe_url}")
             
             # Ensure the database URL uses the correct async driver
-            # For Supabase, we need to be more careful with the connection string format
             if not self.database_url.startswith("postgresql+psycopg://"):
                 if self.database_url.startswith("postgresql://"):
-                    # For Supabase, ensure we don't break the connection string format
-                    if "supabase.com" in self.database_url:
-                        # Supabase-specific connection string handling
-                        self.database_url = self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
-                        logger.info("🔧 Converted Supabase connection string for async driver")
-                    else:
-                        # Standard conversion for other databases
-                        self.database_url = self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+                    # Convert to async driver
+                    self.database_url = self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+                    logger.info("🔧 Converted connection string for async driver")
                 elif self.database_url.startswith("postgresql+asyncpg://"):
                     # Replace asyncpg with psycopg for better compatibility
                     self.database_url = self.database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
             
-            # Create async engine with connection pooling optimized for Supabase
+            # Create async engine with connection pooling optimized for production
             self.engine = create_async_engine(
                 self.database_url,
                 echo=settings.DATABASE_ECHO,
                 pool_pre_ping=True,  # Verify connections before use
                 pool_recycle=300,    # Recycle connections every 5 minutes
-                pool_size=5,        # Supabase allows more connections
+                pool_size=5,        # Connection pool size
                 max_overflow=10,     # Overflow connections for better performance
                 pool_timeout=30,    # Connection timeout
                 connect_args=connect_args
@@ -160,25 +143,16 @@ class DatabaseManager:
             except Exception as e:
                 error_msg = str(e).lower()
                 
-                # Specific error handling for Supabase
-                if "supabase.co" in self.database_url:
-                    if "sasl" in error_msg:
-                        logger.warning(f"⚠️ Supabase SASL authentication issue (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                    elif "password authentication failed" in error_msg:
-                        logger.warning(f"⚠️ Supabase password authentication failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                        logger.warning("🔧 Please verify your Supabase database password in the connection string")
-                    elif "connection was closed" in error_msg or "connection refused" in error_msg:
-                        logger.warning(f"⚠️ Supabase connection closed/refused (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                    else:
-                        logger.warning(f"⚠️ Supabase connection test failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                # Standard error handling for database connections
+                if "connection was closed" in error_msg or "connection refused" in error_msg:
+                    logger.warning(f"⚠️ Database connection closed/refused (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                elif "password authentication failed" in error_msg:
+                    logger.warning(f"⚠️ Database password authentication failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                    logger.warning("🔧 Please verify your database password in the connection string")
+                elif "timeout" in error_msg:
+                    logger.warning(f"⚠️ Database connection timeout (attempt {attempt + 1}/{max_retries}): {str(e)}")
                 else:
-                    # Standard error handling for other databases
-                    if "connection was closed" in error_msg or "connection refused" in error_msg:
-                        logger.warning(f"⚠️ Database connection closed/refused (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                    elif "timeout" in error_msg:
-                        logger.warning(f"⚠️ Database connection timeout (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                    else:
-                        logger.warning(f"⚠️ Database connection test failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                    logger.warning(f"⚠️ Database connection test failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
                 
                 if attempt < max_retries - 1:
                     logger.info(f"🔄 Retrying in {retry_delay}s...")
@@ -277,24 +251,6 @@ class DatabaseManager:
         """Check if database is available and initialized"""
         return self._is_initialized and not self._initialization_failed
     
-    def get_supabase_client(self) -> Optional[Client]:
-        """Get Supabase client for additional features"""
-        if not SUPABASE_AVAILABLE:
-            logger.warning("⚠️ Supabase client not available - install with: pip install supabase")
-            return None
-        
-        if not self._supabase_client and settings.SUPABASE_URL and settings.SUPABASE_ANON_KEY:
-            try:
-                self._supabase_client = create_client(
-                    settings.SUPABASE_URL,
-                    settings.SUPABASE_ANON_KEY
-                )
-                logger.info("✅ Supabase client initialized")
-            except Exception as e:
-                logger.error(f"❌ Failed to initialize Supabase client: {str(e)}")
-                return None
-        
-        return self._supabase_client
     
     async def close(self):
         """Close database connections"""
