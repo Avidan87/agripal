@@ -75,7 +75,9 @@ class DatabaseManager:
                     logger.info("🔒 Configuring SSL for Supabase PostgreSQL connection")
                     # Use SSL configuration optimized for Supabase
                     connect_args = {
-                        "sslmode": "require"  # Supabase PostgreSQL requires SSL
+                        "sslmode": "require",  # Supabase PostgreSQL requires SSL
+                        "connect_timeout": "10",  # Connection timeout
+                        "application_name": "agripal_backend"  # Application name for monitoring
                     }
             
             # Log the database URL for debugging (without password)
@@ -93,10 +95,17 @@ class DatabaseManager:
             logger.info(f"🔗 Database URL: {safe_url}")
             
             # Ensure the database URL uses the correct async driver
+            # For Supabase, we need to be more careful with the connection string format
             if not self.database_url.startswith("postgresql+psycopg://"):
                 if self.database_url.startswith("postgresql://"):
-                    # Replace postgresql:// with postgresql+psycopg:// for async driver
-                    self.database_url = self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+                    # For Supabase, ensure we don't break the connection string format
+                    if "supabase.com" in self.database_url:
+                        # Supabase-specific connection string handling
+                        self.database_url = self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+                        logger.info("🔧 Converted Supabase connection string for async driver")
+                    else:
+                        # Standard conversion for other databases
+                        self.database_url = self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
                 elif self.database_url.startswith("postgresql+asyncpg://"):
                     # Replace asyncpg with psycopg for better compatibility
                     self.database_url = self.database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
@@ -150,12 +159,26 @@ class DatabaseManager:
                 return
             except Exception as e:
                 error_msg = str(e).lower()
-                if "connection was closed" in error_msg or "connection refused" in error_msg:
-                    logger.warning(f"⚠️ Database connection closed/refused (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                elif "timeout" in error_msg:
-                    logger.warning(f"⚠️ Database connection timeout (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                
+                # Specific error handling for Supabase
+                if "supabase.co" in self.database_url:
+                    if "sasl" in error_msg:
+                        logger.warning(f"⚠️ Supabase SASL authentication issue (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                    elif "password authentication failed" in error_msg:
+                        logger.warning(f"⚠️ Supabase password authentication failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                        logger.warning("🔧 Please verify your Supabase database password in the connection string")
+                    elif "connection was closed" in error_msg or "connection refused" in error_msg:
+                        logger.warning(f"⚠️ Supabase connection closed/refused (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                    else:
+                        logger.warning(f"⚠️ Supabase connection test failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
                 else:
-                    logger.warning(f"⚠️ Database connection test failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                    # Standard error handling for other databases
+                    if "connection was closed" in error_msg or "connection refused" in error_msg:
+                        logger.warning(f"⚠️ Database connection closed/refused (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                    elif "timeout" in error_msg:
+                        logger.warning(f"⚠️ Database connection timeout (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                    else:
+                        logger.warning(f"⚠️ Database connection test failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
                 
                 if attempt < max_retries - 1:
                     logger.info(f"🔄 Retrying in {retry_delay}s...")
