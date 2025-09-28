@@ -589,13 +589,15 @@ class PerceptionAgent:
             structured_result = await self._parse_analysis_response(analysis_text, metadata or {})
             
             # Return as JSON for agent tool
+            # Only return the natural analysis text for user display, keep structured data internal
             return json.dumps({
                 "detected_issues": structured_result.detected_issues,
                 "crop_health_score": structured_result.crop_health_score,
                 "confidence_level": structured_result.confidence_level,
                 "recommendations": structured_result.recommendations,
                 "severity": structured_result.severity.value,
-                "analysis_text": analysis_text
+                "analysis_text": structured_result.analysis_text,  # Use the cleaned analysis text
+                "raw_response": analysis_text  # Keep original for debugging
             })
             
         except Exception as e:
@@ -830,59 +832,54 @@ class PerceptionAgent:
         Generate natural analysis text when not provided by GPT-4o
         """
         try:
-            # Create a natural, conversational analysis
+            # Create a natural, conversational analysis without structured headers
             analysis_parts = []
             
-            # Health assessment
+            # Health assessment in conversational tone
             if health_score >= 80:
-                health_desc = "excellent health" 
-                emoji = "🌱✅"
+                analysis_parts.append("Looking at your crop, I can see it's in excellent condition! 🌱✅")
             elif health_score >= 60:
-                health_desc = "moderate health"
-                emoji = "🌿⚠️"
+                analysis_parts.append("Your crop appears to be in moderate health with some areas that could use attention. 🌿⚠️")
             elif health_score >= 40:
-                health_desc = "concerning health"
-                emoji = "🌾❌"
+                analysis_parts.append("I can see your crop is showing some concerning signs that need prompt attention. 🌾❌")
             else:
-                health_desc = "poor health"
-                emoji = "🌾🚨"
+                analysis_parts.append("Your crop is showing significant stress and needs immediate care. 🌾🚨")
             
-            analysis_parts.append(f"Your crop shows {health_desc} with a score of {int(health_score)}/100 {emoji}")
-            
-            # Issues
+            # Issues in conversational tone
             if issues:
                 if len(issues) == 1:
-                    analysis_parts.append(f"I can see signs of {issues[0]}.")
+                    analysis_parts.append(f"The main issue I'm seeing is {issues[0].lower()}.")
                 else:
-                    analysis_parts.append(f"I've identified several concerns: {', '.join(issues[:3])}.")
+                    primary_issues = [issue.lower() for issue in issues[:2]]
+                    analysis_parts.append(f"I've identified several concerns including {' and '.join(primary_issues)}.")
             
-            # Severity
-            severity_desc = severity.value.lower()
-            if severity_desc == "high" or severity_desc == "critical":
-                analysis_parts.append(f"The situation requires {severity_desc} attention. 🚨")
-            elif severity_desc == "medium":
-                analysis_parts.append(f"This is a {severity_desc} concern that should be addressed. ⚠️")
-            else:
-                analysis_parts.append(f"The issues appear to be {severity_desc} in severity. 💡")
+            # Severity context (integrated naturally)
+            if severity.value.lower() in ["high", "critical"]:
+                analysis_parts.append("This situation needs immediate attention to prevent further damage.")
+            elif severity.value.lower() == "medium":
+                analysis_parts.append("These issues should be addressed soon to maintain crop health.")
             
-            # Observations
-            if observations:
-                analysis_parts.append(f"Key observations: {observations}")
+            # Observations (if meaningful)
+            if observations and len(observations) > 20:
+                analysis_parts.append(f"I notice {observations.lower()}.")
             
-            # Recommendations
+            # Recommendations in natural language
             if recommendations:
-                analysis_parts.append("Here's what I recommend:")
-                for i, rec in enumerate(recommendations[:3], 1):
-                    analysis_parts.append(f"{i}. {rec}")
+                if len(recommendations) == 1:
+                    analysis_parts.append(f"My recommendation is to {recommendations[0].lower()}")
+                else:
+                    analysis_parts.append("Here's what I recommend:")
+                    for i, rec in enumerate(recommendations[:3], 1):
+                        analysis_parts.append(f"{i}. {rec}")
             
             # Encouraging closing
-            analysis_parts.append("Remember, early detection and proper care can make a big difference in your crop's success! 🌾💪")
+            analysis_parts.append("With proper care, your crop can recover and thrive! 🌾💪")
             
-            return "\n\n".join(analysis_parts)
+            return " ".join(analysis_parts)
             
         except Exception as e:
-            logger.error(f"❌ Failed to generate analysis text: {str(e)}")
-            return f"Based on the visual analysis, your crop has a health score of {int(health_score)}/100 with {severity.value} severity. I've identified {', '.join(issues[:2]) if issues else 'some concerns'} that need attention."
+            logger.error("Failed to generate analysis text: %s", str(e))
+            return f"Based on my analysis, your crop needs attention. I've identified {', '.join(issues[:2]) if issues else 'some concerns'} that should be addressed to improve crop health."
     
     async def _parse_analysis_response(self, response_text: str, metadata: Dict[str, Any]) -> ImageAnalysisResult:
         """

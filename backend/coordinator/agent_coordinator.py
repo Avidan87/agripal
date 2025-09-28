@@ -520,14 +520,19 @@ class AgentCoordinator:
             # 2) Fallback to perception's analysis_text if knowledge agent didn't provide good results
             #    This ensures we still show the image diagnosis when knowledge enhancement fails
             if has_images and (image_analysis or perception):
+                # First try to get clean analysis text from structured data
                 analysis_text = (
                     image_analysis.get("analysis_text") or
-                    perception.get("analysis_text")
+                    perception.get("analysis_text") or
+                    image_analysis.get("raw_response") or
+                    perception.get("raw_response")
                 )
                 if isinstance(analysis_text, str) and analysis_text.strip():
                     body = self._sanitize_display_text(analysis_text.strip())
-                    opener = self._generate_conversational_opener(user_input, user_context)
-                    return (opener + body) if opener else body
+                    # Ensure we have substantive content after sanitization
+                    if body and len(body) > 50 and not any(keyword in body.upper() for keyword in ["HEALTH_SCORE", "CONFIDENCE", "SEVERITY", "DETECTED_ISSUES"]):
+                        opener = self._generate_conversational_opener(user_input, user_context)
+                        return (opener + body) if opener else body
 
             # 3) Last resort: Let LLM handle the synthesis even without structured data
             #    Using it at the end prevents it from overwriting high-signal perception outputs.
@@ -564,9 +569,18 @@ class AgentCoordinator:
         for line in value.splitlines():
             line_stripped = line.strip()
             
-            # Skip internal metadata lines
-            if re.match(r"^\s*(HEALTH_SCORE|CONFIDENCE|ISSUES|SEVERITY|RECOMMENDATIONS|OBSERVATIONS|Urgency Level|Growth Stage|Disease Detection|Nutrient Status|Environmental Stress|Health Assessment|Visual Observations)\s*:", line, flags=re.IGNORECASE):
+            # Skip internal metadata lines with more comprehensive patterns
+            if re.match(r"^\s*(HEALTH_SCORE|CONFIDENCE|ISSUES|SEVERITY|RECOMMENDATIONS|OBSERVATIONS|Urgency Level|Growth Stage|Disease Detection|Nutrient Status|Environmental Stress|Health Assessment|Visual Observations|detected_issues|crop_health_score|confidence_level|recommendations|severity|analysis_text)\s*:", line, flags=re.IGNORECASE):
                 skip_section = True
+                continue
+                
+            # Skip JSON-like structures
+            if re.match(r'^\s*["\']?(detected_issues|crop_health_score|confidence_level|recommendations|severity|analysis_text)["\']?\s*:', line, flags=re.IGNORECASE):
+                skip_section = True
+                continue
+                
+            # Skip lines that look like list items with structured data
+            if re.match(r'^\s*["\'].*["\'],?\s*$', line) and skip_section:
                 continue
                 
             # Skip markdown section headers that look internal
@@ -574,11 +588,12 @@ class AgentCoordinator:
                 skip_section = True
                 continue
                 
-            # Reset skip if we hit another section or content
-            if line_stripped and not line_stripped.startswith("###") and ":" not in line_stripped:
+            # Reset skip if we hit another section or content that looks conversational
+            if line_stripped and not line_stripped.startswith("###") and ":" not in line_stripped and not line_stripped.startswith(("\"", "'", "[", "]", "{", "}")):
                 skip_section = False
                 
-            if not skip_section and line_stripped:
+            # Only include lines that don't contain JSON-like content or structured data markers
+            if not skip_section and line_stripped and not re.match(r'^\s*[\[\]{}"\',]+\s*$', line_stripped):
                 lines.append(line)
 
         cleaned = "\n".join(lines)
@@ -595,14 +610,21 @@ class AgentCoordinator:
         ).lstrip()
         
         # If we still have structured content, try to find the last paragraph that looks conversational
-        if any(keyword in cleaned.upper() for keyword in ["HEALTH_SCORE", "CONFIDENCE", "SEVERITY"]):
+        if any(keyword in cleaned.upper() for keyword in ["HEALTH_SCORE", "CONFIDENCE", "SEVERITY", "DETECTED_ISSUES", "CROP_HEALTH_SCORE"]):
             # Split by double newlines and take the last substantial paragraph
             paragraphs = [p.strip() for p in cleaned.split("\n\n") if p.strip()]
             for paragraph in reversed(paragraphs):
                 # Look for paragraphs that don't contain structured keywords
-                if not any(keyword in paragraph.upper() for keyword in ["HEALTH_SCORE", "CONFIDENCE", "SEVERITY", "ISSUES"]):
+                if not any(keyword in paragraph.upper() for keyword in ["HEALTH_SCORE", "CONFIDENCE", "SEVERITY", "ISSUES", "DETECTED_ISSUES", "CROP_HEALTH_SCORE", "CONFIDENCE_LEVEL"]):
                     if len(paragraph) > 50:  # Substantial content
                         return paragraph
+        
+        # Final fallback: if we still have structured content, look for the longest conversational sentence
+        if any(char in cleaned for char in ["{", "}", "[", "]", '":']):
+            sentences = [s.strip() for s in cleaned.split(".") if s.strip() and len(s.strip()) > 30]
+            for sentence in sentences:
+                if not any(keyword in sentence.upper() for keyword in ["HEALTH_SCORE", "CONFIDENCE", "SEVERITY", "ISSUES", "DETECTED_ISSUES"]) and not any(char in sentence for char in ["{", "}", "[", "]", '":']):
+                    return sentence + "."
         
         return cleaned
 
