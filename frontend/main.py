@@ -17,8 +17,8 @@ def main():
     """Launch AgriPal Gradio UI"""
     print("🌾 Starting AgriPal UI...")
     
-    # Get API URL from environment or use default
-    api_url = os.getenv("AGRIPAL_API_URL", "http://localhost:8000/api/v1/agents")
+    # Get API URL from environment or use Railway backend
+    api_url = os.getenv("AGRIPAL_API_URL", "https://agripal-production.up.railway.app/api/v1/agents")
     
     print(f"🔗 API URL: {api_url}")
     print(f"🌐 Frontend will be available at: http://localhost:7860")
@@ -27,8 +27,8 @@ def main():
     app = create_agripal_interface(api_url)
     app.launch(
         server_name="0.0.0.0",
-        server_port=7860,
-        inbrowser=True
+        server_port=int(os.getenv("PORT", 7860)),
+        inbrowser=False  # Don't open browser in production
     )
 if __name__ == "__main__":
     main()
