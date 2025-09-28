@@ -132,7 +132,13 @@ class KnowledgeAgent:
             
             # Preprocess and cache priority datasets
             if self.hf_api:
-                await self._preprocess_and_cache_datasets()
+                # Check if ChromaDB needs population
+                needs_population = await self._check_chromadb_population()
+                if needs_population:
+                    logger.info("📚 ChromaDB appears empty, populating with agricultural data...")
+                    await self._preprocess_and_cache_datasets()
+                else:
+                    logger.info("📚 ChromaDB already populated with agricultural data")
             
             # Setup OpenAI Agent with tools
             await self._setup_agent()
@@ -747,34 +753,18 @@ Always provide:
                         
                         logger.info("🔍 Using structured perception data as response")
                 else:
-                    # No documents found and either no perception results or query is not image-related
-                    # Generate query-specific response for non-image queries
-                    logger.info("🔍 No documents found, generating query-specific response")
-                    content = f"I searched for information about '{user_query}' but didn't find specific results in my knowledge base. "
-                    
-                    # Add more helpful guidance based on the query type
-                    if any(keyword in user_query.lower() for keyword in ['disease', 'pest', 'problem', 'issue', 'sick', 'unhealthy']):
-                        content += "For plant health issues, I'd recommend checking for common symptoms like discoloration, spots, wilting, or unusual growth patterns. "
-                        content += "Consider factors like watering, soil conditions, and environmental stress. "
-                    elif any(keyword in user_query.lower() for keyword in ['fertilizer', 'nutrient', 'feeding', 'soil']):
-                        content += "For soil and nutrient questions, consider factors like pH levels, soil type, and specific nutrient deficiencies. "
-                        content += "A soil test can provide valuable insights into what your plants need. "
-                    elif any(keyword in user_query.lower() for keyword in ['watering', 'water', 'irrigation']):
-                        content += "For watering questions, consider factors like soil type, plant species, weather conditions, and drainage. "
-                        content += "Most plants prefer deep, infrequent watering over frequent shallow watering. "
-                    elif any(keyword in user_query.lower() for keyword in ['planting', 'growing', 'cultivation', 'care']):
-                        content += "For growing questions, consider factors like timing, spacing, soil preparation, and ongoing care requirements. "
-                        content += "Each plant has specific needs for optimal growth. "
-                    
-                    content += "You can try rephrasing your question with more specific details about your situation, or I can help with a different aspect of your farming needs."
+                    # No documents found - use OpenAI's general agricultural knowledge
+                    logger.info("🔍 No documents found, using general agricultural knowledge")
+                    content = await self._generate_general_agricultural_response(user_query, crop_type, user_context)
                 
-                # Add contextual farming advice when no specific results found
-                content += "\n\nGeneral farming recommendations based on common practices:"
-                if crop_type:
-                    content += f"\n• For {crop_type} crops, ensure proper spacing and drainage"
-                    content += f"\n• Monitor {crop_type} for common pests and diseases in your region"
-                content += "\n• Regular soil testing helps identify nutrient needs"
-                content += "\n• Maintain consistent watering schedule based on crop requirements"
+                # Only add generic advice if the response is very short (likely a fallback)
+                if len(content) < 200:
+                    content += "\n\nAdditional farming tips:"
+                    if crop_type:
+                        content += f"\n• For {crop_type} crops, ensure proper spacing and drainage"
+                        content += f"\n• Monitor {crop_type} for common pests and diseases in your region"
+                    content += "\n• Regular soil testing helps identify nutrient needs"
+                    content += "\n• Maintain consistent watering schedule based on crop requirements"
             
             # Append concise weather summary if available
             if weather_block:
@@ -1110,6 +1100,179 @@ Always provide:
         Write your response naturally, as if you're continuing your ongoing relationship with this farmer.
         """
     
+    async def _check_chromadb_population(self) -> bool:
+        """
+        Check if ChromaDB needs to be populated with agricultural data
+        
+        Returns:
+            True if population is needed, False if already populated
+        """
+        try:
+            if not self.chroma_client:
+                logger.warning("⚠️ ChromaDB client not available")
+                return False
+                
+            collection = self.chroma_client.get_collection("agricultural_knowledge")
+            doc_count = collection.count()
+            
+            # Consider it populated if we have at least 50 documents
+            # (Should be around 200 from the two datasets: Mahesh2841/Agriculture + Dharine/agriculture-10k)
+            is_populated = doc_count >= 50
+            
+            logger.info(f"📊 ChromaDB has {doc_count} documents, populated: {is_populated}")
+            return not is_populated
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to check ChromaDB population: {str(e)}")
+            return True  # Assume needs population if we can't check
+
+    async def _populate_chromadb_with_docs(self, documents: List[Dict[str, Any]], dataset_name: str) -> None:
+        """
+        Populate ChromaDB with processed agricultural documents and their embeddings
+        """
+        try:
+            if not self.chroma_client:
+                logger.warning("⚠️ ChromaDB client not available for population")
+                return
+                
+            collection = self.chroma_client.get_collection("agricultural_knowledge")
+            
+            # Prepare documents for ChromaDB
+            doc_ids = []
+            doc_texts = []
+            doc_embeddings = []
+            doc_metadatas = []
+            
+            logger.info(f"📚 Populating ChromaDB with {len(documents)} documents from {dataset_name}")
+            
+            for i, doc in enumerate(documents):
+                try:
+                    # Generate unique ID
+                    doc_id = f"{dataset_name}_{i}_{hash(doc.get('content', ''))}"
+                    doc_ids.append(doc_id)
+                    
+                    # Extract text content
+                    content = doc.get('content', '')
+                    if len(content) > 8000:  # Limit content length for embeddings
+                        content = content[:8000] + "..."
+                    doc_texts.append(content)
+                    
+                    # Generate embedding
+                    embedding_response = await self.client.embeddings.create(
+                        input=content,
+                        model=self.embedding_model
+                    )
+                    doc_embeddings.append(embedding_response.data[0].embedding)
+                    
+                    # Prepare metadata
+                    metadata = {
+                        "dataset": dataset_name,
+                        "title": doc.get('title', ''),
+                        "crop_type": doc.get('crop_type', ''),
+                        "category": doc.get('category', 'general'),
+                        "source": doc.get('source', 'huggingface')
+                    }
+                    doc_metadatas.append(metadata)
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to process document {i}: {str(e)}")
+                    continue
+            
+            # Add to ChromaDB in batch
+            if doc_ids:
+                collection.add(
+                    ids=doc_ids,
+                    documents=doc_texts,
+                    embeddings=doc_embeddings,
+                    metadatas=doc_metadatas
+                )
+                logger.info(f"✅ Added {len(doc_ids)} documents to ChromaDB from {dataset_name}")
+            else:
+                logger.warning(f"⚠️ No valid documents to add from {dataset_name}")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to populate ChromaDB with {dataset_name}: {str(e)}")
+
+    async def _generate_general_agricultural_response(self, user_query: str, crop_type: Optional[str], user_context: Dict[str, Any]) -> str:
+        """
+        Generate helpful agricultural response using OpenAI's general knowledge when knowledge base is empty
+        """
+        try:
+            # Build a prompt that leverages OpenAI's agricultural knowledge
+            system_prompt = """You are an experienced agricultural consultant with deep knowledge of crop production, pest management, plant diseases, and sustainable farming practices. 
+
+Provide practical, actionable advice for farmers. Be conversational and engaging, as if speaking directly to a farmer who needs help. Use relevant emojis (🌾🌱🐛💧🌧️☀️🌿💡) to make responses more engaging.
+
+For pest-related questions, include:
+- What damage the pest causes
+- How to identify the problem
+- Prevention strategies
+- Treatment options (both organic and conventional)
+- Long-term management
+
+For crop diseases, include:
+- Symptoms to look for
+- Conditions that favor the disease
+- Prevention measures
+- Treatment options
+
+Always be encouraging and supportive, helping farmers feel confident about managing their crops."""
+
+            user_prompt = f"""Question: {user_query}
+
+Context: 
+- Crop type: {crop_type or 'not specified'}
+- Location: {user_context.get('location', 'not specified')}
+
+Please provide a comprehensive, helpful response that directly answers this farmer's question. Be specific and actionable."""
+
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.7,
+                max_tokens=600
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            logger.error("Failed to generate general agricultural response: %s", str(e))
+            # Enhanced fallback with specific agricultural guidance
+            query_lower = user_query.lower()
+            
+            if any(keyword in query_lower for keyword in ['aphid', 'pest', 'insect', 'bug']):
+                if 'potato' in query_lower:
+                    return """Aphids can cause significant damage to potato crops! 🐛🥔 These small, soft-bodied insects feed on plant sap and can:
+
+• Stunt plant growth by draining nutrients
+• Transmit viral diseases (like potato virus Y and potato leafroll virus)
+• Cause yellowing and curling of leaves
+• Reduce tuber yield and quality
+• Create honeydew that leads to sooty mold
+
+Prevention and control options:
+🌱 Encourage beneficial insects like ladybugs and lacewings
+💧 Use reflective mulches to confuse aphids
+🌿 Apply neem oil or insecticidal soap for organic control
+🔬 Consider systemic insecticides for severe infestations
+🛡️ Monitor regularly, especially during warm weather
+
+Early detection is key - check the undersides of leaves regularly for small clusters of these pests!"""
+                else:
+                    return """Aphids are common agricultural pests that can damage many crops! 🐛 These small insects feed on plant sap and can cause stunting, yellowing, and transmit plant viruses. Regular monitoring and integrated pest management approaches work best for control."""
+            
+            elif any(keyword in query_lower for keyword in ['disease', 'fungal', 'bacterial', 'blight']):
+                return "Plant diseases can significantly impact crop yields. Early identification and proper management are crucial. Consider factors like humidity, temperature, and plant stress when developing treatment strategies. 🌿🔬"
+            
+            elif any(keyword in query_lower for keyword in ['nutrient', 'fertilizer', 'deficiency']):
+                return "Proper nutrition is essential for healthy crop development. Soil testing can help identify specific nutrient needs. Consider both macro and micronutrients for optimal plant health. 🌱💡"
+            
+            else:
+                return f"I'd be happy to help with your question about {user_query}. Could you provide more specific details about what you're observing with your crops? This will help me give you more targeted advice. 🌾"
+
     async def _parse_agent_response(self, run_result: Any, original_query: str) -> KnowledgeSearchResult:
         """
         Parse OpenAI Agent response into structured KnowledgeSearchResult
@@ -1167,7 +1330,8 @@ Always provide:
             logger.error(f"❌ Failed to parse knowledge agent response: {str(e)}")
             
             # Provide helpful fallback advice for error case
-            user_context = message.metadata if hasattr(message, 'metadata') else {}
+            # Note: message variable not available in this context, using empty dict
+            user_context = {}
             
             fallback_advice = "I encountered a technical issue retrieving specific knowledge. Try rephrasing your question with more specific details about your crop, symptoms, or farming situation. I'm here to help with agricultural guidance!"
             
@@ -1554,6 +1718,10 @@ Always provide:
                     # Store processed sample
                     cache_key = f"{dataset_name}_processed_sample"
                     self.hf_datasets_cache[cache_key] = sample_docs
+                    
+                    # CRITICAL FIX: Actually populate ChromaDB with the agricultural data
+                    if self.chroma_client and sample_docs:
+                        await self._populate_chromadb_with_docs(sample_docs, dataset_name)
                     
                     caching_results["cached_datasets"].append({
                         "name": dataset_name,
